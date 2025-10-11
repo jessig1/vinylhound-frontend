@@ -87,3 +87,16 @@ export async function updateContent(token, content) {
     body: JSON.stringify({ content }),
   });
 }
+
+export async function fetchAlbum(id) {
+  const albumId = id ? `/albums/${encodeURIComponent(id)}` : "/album";
+  return await request(albumId, {
+    method: "GET",
+  });
+}
+
+export async function fetchAlbums() {
+  return await request("/albums", {
+    method: "GET",
+  });
+}
