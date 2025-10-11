@@ -4,6 +4,8 @@
   export let content = [];
   export let draft = "";
   export let loading = false;
+  export let favoriteAlbums = [];
+  export let ratedAlbums = [];
 
   const dispatch = createEventDispatcher();
 
@@ -14,6 +16,24 @@
 
   function refresh() {
     dispatch("refresh");
+  }
+
+  function albumTitle(item) {
+    return item?.album?.title || item?.title || "Untitled album";
+  }
+
+  function albumArtist(item) {
+    return item?.album?.artist || item?.artist || "Unknown artist";
+  }
+
+  function albumId(item) {
+    return item?.albumId || item?.id || item?.album?.id || albumTitle(item);
+  }
+
+  function albumRating(item) {
+    const raw = item?.rating ?? item?.album?.rating ?? null;
+    const numeric = Number(raw);
+    return Number.isFinite(numeric) ? numeric : null;
   }
 </script>
 
@@ -41,6 +61,50 @@
   {:else}
     <p class="empty">No content yet. Add some above!</p>
   {/if}
+
+  <div class="album-summary">
+    <div class="album-summary__header">
+      <h3>Your albums</h3>
+      <p class="hint">Albums you have favorited or rated.</p>
+    </div>
+
+    {#if favoriteAlbums.length || ratedAlbums.length}
+      <div class="album-summary__grid">
+        {#if favoriteAlbums.length}
+          <section class="album-card" aria-label="Favorited albums">
+            <h4>Favorited</h4>
+            <ul>
+              {#each favoriteAlbums as item (albumId(item))}
+                <li>
+                  <span class="album-card__title">{albumTitle(item)}</span>
+                  <span class="album-card__artist">{albumArtist(item)}</span>
+                </li>
+              {/each}
+            </ul>
+          </section>
+        {/if}
+
+        {#if ratedAlbums.length}
+          <section class="album-card" aria-label="Rated albums">
+            <h4>Rated</h4>
+            <ul>
+              {#each ratedAlbums as item (albumId(item))}
+                <li>
+                  <span class="album-card__title">{albumTitle(item)}</span>
+                  <span class="album-card__artist">{albumArtist(item)}</span>
+                  {#if albumRating(item)}
+                    <span class="album-card__rating">{albumRating(item)} / 5</span>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          </section>
+        {/if}
+      </div>
+    {:else}
+      <p class="empty">Favorite or rate an album to see it here.</p>
+    {/if}
+  </div>
 </section>
 
 <style>
@@ -73,5 +137,79 @@
   .empty {
     margin-top: 1rem;
     color: #64748b;
+  }
+
+  .album-summary {
+    margin-top: 2.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .album-summary__header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .album-summary__header h3 {
+    margin: 0;
+    font-size: 1.35rem;
+    color: #111827;
+  }
+
+  .album-summary__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1.25rem;
+  }
+
+  .album-card {
+    background: #f8fafc;
+    border-radius: 0.9rem;
+    padding: 1rem 1.2rem;
+    box-shadow: inset 0 0 0 1px rgba(79, 70, 229, 0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .album-card h4 {
+    margin: 0;
+    font-size: 1.05rem;
+    color: #1e293b;
+  }
+
+  .album-card ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+  }
+
+  .album-card li {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    font-size: 0.95rem;
+    color: #1f2937;
+  }
+
+  .album-card__title {
+    font-weight: 600;
+  }
+
+  .album-card__artist {
+    font-size: 0.85rem;
+    color: #475569;
+  }
+
+  .album-card__rating {
+    margin-top: 0.1rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #4338ca;
   }
 </style>

@@ -1,0 +1,60 @@
+[
+  {
+    "id": "neon-reverie",
+    "artist": "The Midnight Echoes",
+    "title": "Neon Reverie",
+    "releaseYear": 2024,
+    "rating": 4,
+    "genres": ["Synthwave", "Dream Pop", "Electronic"],
+    "tracks": [
+      "Prelude (City Lights)",
+      "Neon Reverie",
+      "Sapphire Skyline",
+      "Digital Heartbeat",
+      "Moonlit Drive",
+      "Stardust Serenade",
+      "Echoes of Dawn",
+      "Afterglow",
+      "Midnight Parallax",
+      "Aurora (Reprise)"
+    ]
+  },
+  {
+    "id": "echoes-of-the-harbor",
+    "artist": "Lina Harper",
+    "title": "Echoes of the Harbor",
+    "releaseYear": 2022,
+    "rating": 5,
+    "genres": ["Indie Folk", "Acoustic"],
+    "tracks": [
+      "Harbor Lights",
+      "Breakwater",
+      "Salt & Cedar",
+      "Moonlow",
+      "North Current",
+      "Tide's Return",
+      "Glass Horizon",
+      "Signal Fires",
+      "Anchored in Bloom",
+      "Distant Beacon"
+    ]
+  },
+  {
+    "id": "chromatic-shift",
+    "artist": "Axis Nova",
+    "title": "Chromatic Shift",
+    "releaseYear": 2023,
+    "rating": 3,
+    "genres": ["Experimental", "Electronic", "Ambient"],
+    "tracks": [
+      "Vector Field",
+      "Dimensional Drift",
+      "Phase Diagram",
+      "Spectral Bloom",
+      "Inverted Prism",
+      "Gradient Pulse",
+      "Cascade",
+      "Higher Order"
+    ]
+  }
+]

@@ -1,8 +1,11 @@
 <script>
-  import { onMount } from "svelte";
+  import { onMount, createEventDispatcher } from "svelte";
   import AlbumPage from "./AlbumPage.svelte";
   import { fetchAlbum, fetchAlbums, ApiError } from "../lib/api";
   import { sampleAlbums, findSampleAlbum } from "../lib/sampleAlbums";
+
+  export let token = "";
+  export let userAlbums = {};
 
   let albums = [];
   let loading = true;
@@ -18,6 +21,8 @@
   let detailLoading = false;
   let detailError = "";
   let usingSampleData = false;
+  const dispatch = createEventDispatcher();
+  let lastToken = token;
 
   let mounted = false;
   let detailRequestId = 0;
@@ -31,6 +36,11 @@
   });
 
   $: searchTerm = search.trim().toLowerCase();
+
+  $: if (mounted && token !== lastToken) {
+    lastToken = token;
+    loadAlbums();
+  }
 
   $: availableGenres = computeGenres(albums);
 
@@ -55,7 +65,7 @@
     detailLoading = false;
     usingSampleData = false;
     try {
-      const data = await fetchAlbums();
+      const data = await fetchAlbums({ token });
       albums = Array.isArray(data) ? data : [];
       if (albums.length) {
         await selectAlbum(albums[0]);
@@ -144,6 +154,68 @@
     return album?.id ?? album?._id ?? album?.slug ?? null;
   }
 
+  function getInteractionByAlbum(album) {
+    const id = getAlbumFetchId(album) || getAlbumKey(album);
+    if (!id) {
+      return null;
+    }
+    return userAlbums?.[id] || null;
+  }
+
+  function isFavoriteAlbum(album) {
+    const interaction = getInteractionByAlbum(album);
+    return Boolean(interaction?.favorite);
+  }
+
+  function getAlbumRating(album) {
+    const interaction = getInteractionByAlbum(album);
+    const value = interaction?.rating;
+    return Number.isFinite(value) ? Number(value) : null;
+  }
+
+  function canInteract() {
+    return Boolean(token) && !usingSampleData;
+  }
+
+  function interactionMessage() {
+    if (!token) {
+      return "Log in to favorite and rate albums.";
+    }
+    if (usingSampleData) {
+      return "Album service is offline; favorites and ratings won't sync.";
+    }
+    return "Favorites and ratings appear in your profile.";
+  }
+
+  function sendFavorite(album, nextFavorite) {
+    if (!canInteract()) {
+      return;
+    }
+    const albumId = getAlbumFetchId(album) || getAlbumKey(album);
+    if (!albumId) {
+      return;
+    }
+    const favoriteValue =
+      nextFavorite === undefined || nextFavorite === null ? !isFavoriteAlbum(album) : Boolean(nextFavorite);
+    dispatch("favorite", { albumId, favorite: favoriteValue, album });
+  }
+
+  function sendRating(album, value) {
+    if (!canInteract()) {
+      return;
+    }
+    const albumId = getAlbumFetchId(album) || getAlbumKey(album);
+    if (!albumId) {
+      return;
+    }
+    let ratingValue = null;
+    if (value !== undefined && value !== null) {
+      const numeric = Number(value);
+      ratingValue = Number.isFinite(numeric) ? numeric : null;
+    }
+    dispatch("rate", { albumId, rating: ratingValue, album });
+  }
+
   async function selectAlbum(album) {
     if (!album) {
       selectedAlbumKey = null;
@@ -171,7 +243,7 @@
     detailLoading = true;
 
     try {
-      const data = await fetchAlbum(fetchId);
+      const data = await fetchAlbum(fetchId, { token });
       if (detailRequestId === requestId) {
         albumDetail = {
           ...album,
@@ -242,7 +314,7 @@
       <button type="button" class="secondary" on:click={clearFilters}>Clear filters</button>
       <button type="button" on:click={loadAlbums} disabled={loading}>
         {#if loading}
-          Refreshing…
+          Refreshing...
         {:else}
           Refresh
         {/if}
@@ -253,7 +325,7 @@
   <div class="albums__layout">
     <div class="albums__list">
       {#if loading}
-        <p class="status">Loading albums…</p>
+        <p class="status">Loading albums...</p>
       {:else if error}
         <div class="status status--error">
           <p>{error}</p>
@@ -275,7 +347,12 @@
                 class:selected={getAlbumKey(album) === selectedAlbumKey}
                 on:click={() => selectAlbum(album)}
               >
-                <span class="album-title">{album?.title || "Untitled album"}</span>
+                <div class="album-title-row">
+                  <span class="album-title">{album?.title || "Untitled album"}</span>
+                  {#if isFavoriteAlbum(album)}
+                    <span class="album-badge" aria-label="Favorited">&#9733;</span>
+                  {/if}
+                </div>
                 <span class="album-artist">{album?.artist || "Unknown artist"}</span>
                 <span class="album-meta">
                   {#if album?.releaseYear}
@@ -285,6 +362,9 @@
                     <span>Rating: {album.rating} / 5</span>
                   {/if}
                 </span>
+                {#if getAlbumRating(album)}
+                  <span class="album-user-rating">Your rating: {getAlbumRating(album)} / 5</span>
+                {/if}
               </button>
             </li>
           {/each}
@@ -294,14 +374,22 @@
 
     <div class="albums__detail">
       {#if detailLoading}
-        <p class="status">Loading album details…</p>
+        <p class="status">Loading album details...</p>
       {:else if detailError}
         <div class="status status--error">
           <p>{detailError}</p>
           <button type="button" on:click={retryDetail}>Try again</button>
         </div>
       {:else if albumDetail}
-        <AlbumPage album={albumDetail} />
+        <AlbumPage
+          album={albumDetail}
+          favorite={isFavoriteAlbum(albumDetail)}
+          userRating={getAlbumRating(albumDetail)}
+          canInteract={canInteract()}
+          interactionMessage={interactionMessage()}
+          on:favorite={(event) => sendFavorite(albumDetail, event.detail?.favorite)}
+          on:rate={(event) => sendRating(albumDetail, event.detail?.rating)}
+        />
       {:else}
         <p class="status">Select an album to view its details.</p>
       {/if}
@@ -463,6 +551,31 @@
     gap: 0.75rem;
     font-size: 0.85rem;
     opacity: 0.8;
+  }
+
+  .album-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.65rem;
+  }
+
+  .album-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.6rem;
+    height: 1.6rem;
+    border-radius: 50%;
+    background: rgba(252, 211, 77, 0.25);
+    color: #f59e0b;
+    font-size: 1rem;
+    font-weight: 700;
+  }
+
+  .album-user-rating {
+    font-size: 0.85rem;
+    color: rgba(15, 23, 42, 0.8);
   }
 
   .albums__detail {
