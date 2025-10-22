@@ -5,6 +5,7 @@
   import AuthPanel from "./components/AuthPanel.svelte";
   import ContentPanel from "./components/ContentPanel.svelte";
   import AlbumMainPage from "./components/AlbumMainPage.svelte";
+  import NewsFeed from "./components/NewsFeed.svelte";
   import {
     signup as apiSignup,
     login as apiLogin,
@@ -38,6 +39,7 @@
     }
     token = stored.token;
     activeUser = stored.username;
+    currentView = "news";
     loadContent({ silent: true });
     loadUserAlbums({ silent: true });
   });
@@ -77,13 +79,19 @@
         source?.rating !== undefined && source?.rating !== null && Number.isFinite(Number(source.rating))
           ? Number(source.rating)
           : null;
-      const favorite = source?.favorite !== undefined ? Boolean(source.favorite) : false;
-      if (!favorite && numericRating === null) {
+      const favoritedValue =
+        source?.favorited !== undefined
+          ? Boolean(source.favorited)
+          : source?.favorite !== undefined
+          ? Boolean(source.favorite)
+          : false;
+      if (!favoritedValue && numericRating === null) {
         continue;
       }
       map[albumId] = {
         albumId,
-        favorite,
+        favorite: favoritedValue,
+        favorited: favoritedValue,
         rating: numericRating,
         album: entry?.album || entry?.preference?.album || null,
         title: entry?.title || entry?.album?.title || null,
@@ -141,6 +149,13 @@
 
   function handleNavigate(event) {
     const nextView = event.detail?.view || "profile";
+    if (!token && nextView !== "profile") {
+      if (currentView !== "profile") {
+        currentView = "profile";
+      }
+      setMessage("Please log in or sign up to continue.", "info");
+      return;
+    }
     if (currentView === nextView) {
       return;
     }
@@ -245,7 +260,7 @@
       await loadContent({ silent: true });
       await loadUserAlbums({ silent: true });
       setMessage(`Welcome back, ${username}!`, "success");
-      currentView = "profile";
+      currentView = "news";
     }
   }
 
@@ -293,9 +308,16 @@
       return;
     }
     const base = ensureAlbumEntry(albumId, album);
+    const normalizedUpdates = { ...updates };
+    if ("favorite" in normalizedUpdates && !("favorited" in normalizedUpdates)) {
+      normalizedUpdates.favorited = Boolean(normalizedUpdates.favorite);
+    }
+    if ("favorited" in normalizedUpdates && !("favorite" in normalizedUpdates)) {
+      normalizedUpdates.favorite = Boolean(normalizedUpdates.favorited);
+    }
     const next = {
       ...base,
-      ...updates,
+      ...normalizedUpdates,
     };
 
     const hasFavorite = Boolean(next.favorite);
@@ -325,21 +347,25 @@
     }
     const favorite = Boolean(detail.favorite);
     const previousEntry = albumInteractions[albumId];
+    const ratingValue = Number(previousEntry?.rating);
+    const currentRating = Number.isFinite(ratingValue) ? ratingValue : null;
     updateAlbumEntry(
       albumId,
       {
         favorite,
-        rating: previousEntry?.rating ?? null,
+        favorited: favorite,
+        rating: currentRating,
       },
       detail.album
     );
     try {
-      const result = await favoriteAlbum({ token, albumId, favorite });
+      const result = await favoriteAlbum({ token, albumId, favorite, rating: currentRating });
       updateAlbumEntry(
         albumId,
         {
-          favorite: Boolean(result?.favorite ?? favorite),
-          rating: previousEntry?.rating ?? null,
+          favorite: Boolean(result?.favorited ?? favorite),
+          favorited: Boolean(result?.favorited ?? favorite),
+          rating: result?.rating ?? currentRating,
         },
         detail.album
       );
@@ -348,7 +374,8 @@
         albumId,
         {
           favorite: Boolean(previousEntry?.favorite ?? false),
-          rating: previousEntry?.rating ?? null,
+          favorited: Boolean(previousEntry?.favorited ?? previousEntry?.favorite ?? false),
+          rating: currentRating,
         },
         detail.album
       );
@@ -374,17 +401,19 @@
     const rating = detail.rating;
     const previousEntry = albumInteractions[albumId];
     const desired = rating === null || rating === undefined ? null : rating;
+    const currentFavorite = Boolean(previousEntry?.favorite ?? false);
     updateAlbumEntry(
       albumId,
       {
-        favorite: Boolean(previousEntry?.favorite ?? false),
+        favorite: currentFavorite,
+        favorited: currentFavorite,
         rating: desired === null ? null : Number(desired),
       },
       detail.album
     );
 
     try {
-      const result = await rateAlbum({ token, albumId, rating: desired });
+      const result = await rateAlbum({ token, albumId, rating: desired, favorite: currentFavorite });
       const resolved =
         result?.rating === null || result?.rating === undefined
           ? null
@@ -392,7 +421,8 @@
       updateAlbumEntry(
         albumId,
         {
-          favorite: Boolean(previousEntry?.favorite ?? false),
+          favorite: currentFavorite,
+          favorited: currentFavorite,
           rating: resolved,
         },
         detail.album
@@ -401,7 +431,8 @@
       updateAlbumEntry(
         albumId,
         {
-          favorite: Boolean(previousEntry?.favorite ?? false),
+          favorite: currentFavorite,
+          favorited: currentFavorite,
           rating: previousEntry?.rating ?? null,
         },
         detail.album
@@ -427,7 +458,14 @@
 
   <FlashMessage {message} kind={messageKind} />
 
-  {#if currentView === "profile"}
+  {#if currentView === "news"}
+    <NewsFeed
+      {content}
+      {favoriteAlbums}
+      {ratedAlbums}
+      {loading}
+    />
+  {:else if currentView === "profile"}
     {#if token}
       <ContentPanel
         {content}

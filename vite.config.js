@@ -18,7 +18,7 @@ function ensureUserAlbum(albumId) {
     const album = findSampleAlbum(albumId) || { id: albumId };
     mockUserAlbums.set(albumId, {
       albumId,
-      favorite: false,
+      favorited: false,
       rating: null,
       album,
     });
@@ -31,17 +31,16 @@ function cleanupUserAlbum(albumId) {
   if (!entry) {
     return;
   }
-  if (!entry.favorite && (entry.rating === null || entry.rating === undefined)) {
+  if (!entry.favorited && (entry.rating === null || entry.rating === undefined)) {
     mockUserAlbums.delete(albumId);
   }
 }
 
 function serializeUserAlbums() {
   return Array.from(mockUserAlbums.values()).map((entry) => ({
-    albumId: entry.albumId,
-    favorite: entry.favorite,
-    rating: entry.rating,
     album: entry.album,
+    favorited: Boolean(entry.favorited),
+    rating: entry.rating,
   }));
 }
 
@@ -81,7 +80,7 @@ function handleMockAlbums(req, res) {
   }
 
   const url = new URL(originalUrl, "http://localhost");
-  const { pathname } = url;
+  const { pathname, searchParams } = url;
 
   res.setHeader("Content-Type", "application/json");
 
@@ -92,7 +91,8 @@ function handleMockAlbums(req, res) {
   }
 
   if (pathname === "/api/album") {
-    const album = findSampleAlbum();
+    const albumId = searchParams.get("id");
+    const album = findSampleAlbum(albumId);
     if (album) {
       res.statusCode = 200;
       res.end(JSON.stringify(album));
@@ -163,70 +163,62 @@ export default defineConfig({
           }
         };
 
-        if (method === "GET" && pathname === "/api/me/albums") {
-          send(200, serializeUserAlbums());
+        if (method === "GET" && pathname === "/api/me/albums/preferences") {
+          send(200, { preferences: serializeUserAlbums() });
           return;
         }
 
-        if (method === "PUT" && pathname.endsWith("/favorite")) {
-          readRequestBody(req)
-            .then((body) => {
-              const albumId = pathname.replace("/api/me/albums/", "").replace("/favorite", "");
-              if (!albumId) {
-                send(400, { error: "Album identifier is required." });
-                return;
-              }
-              const favorite = Boolean(body?.favorite);
-              const entry = ensureUserAlbum(albumId);
-              entry.favorite = favorite;
-              cleanupUserAlbum(albumId);
-              send(200, entry);
-            })
-            .catch((err) => {
-              send(400, { error: err?.message || "Invalid request body." });
-            });
-          return;
-        }
-
-        if (method === "PUT" && pathname.endsWith("/rating")) {
-          readRequestBody(req)
-            .then((body) => {
-              const albumId = pathname.replace("/api/me/albums/", "").replace("/rating", "");
-              if (!albumId) {
-                send(400, { error: "Album identifier is required." });
-                return;
-              }
-              const ratingValue = Number(body?.rating);
-              if (!Number.isFinite(ratingValue) || ratingValue < 1 || ratingValue > 5) {
-                send(400, { error: "Rating must be between 1 and 5." });
-                return;
-              }
-              const entry = ensureUserAlbum(albumId);
-              entry.rating = ratingValue;
-              send(200, entry);
-            })
-            .catch((err) => {
-              send(400, { error: err?.message || "Invalid request body." });
-            });
-          return;
-        }
-
-        if (method === "DELETE" && pathname.endsWith("/rating")) {
-          const albumId = pathname.replace("/api/me/albums/", "").replace("/rating", "");
+        const preferenceMatch = pathname.match(/^\/api\/me\/albums\/([^/]+)\/preference$/);
+        if (preferenceMatch) {
+          const albumId = decodeURIComponent(preferenceMatch[1] || "");
           if (!albumId) {
             send(400, { error: "Album identifier is required." });
             return;
           }
-          ensureUserAlbum(albumId).rating = null;
-          cleanupUserAlbum(albumId);
-          send(204, null);
-          return;
-        }
 
-        if (method === "GET" && pathname.startsWith("/api/me/albums/")) {
-          const albumId = pathname.replace("/api/me/albums/", "");
-          const entry = ensureUserAlbum(albumId);
-          send(200, entry);
+          if (method === "PUT") {
+            readRequestBody(req)
+              .then((body) => {
+                const payload = body && typeof body === "object" ? body : {};
+                const entry = ensureUserAlbum(albumId);
+                const hasRating = Object.prototype.hasOwnProperty.call(payload, "rating");
+                const ratingValue = hasRating ? payload.rating : entry.rating;
+                let nextRating = null;
+                if (ratingValue === null || ratingValue === undefined) {
+                  nextRating = null;
+                } else {
+                  const numeric = Number(ratingValue);
+                  if (!Number.isFinite(numeric) || numeric < 1 || numeric > 5) {
+                    send(400, { error: "Rating must be between 1 and 5." });
+                    return;
+                  }
+                  nextRating = numeric;
+                }
+
+                const hasFavorited = Object.prototype.hasOwnProperty.call(payload, "favorited");
+                const nextFavorited = hasFavorited
+                  ? Boolean(payload.favorited)
+                  : Boolean(entry.favorited);
+
+                entry.album = entry.album || findSampleAlbum(albumId) || { id: albumId };
+                entry.rating = nextRating;
+                entry.favorited = nextFavorited;
+                cleanupUserAlbum(albumId);
+                send(204, null);
+              })
+              .catch((err) => {
+                send(400, { error: err?.message || "Invalid request body." });
+              });
+            return;
+          }
+
+          if (method === "DELETE") {
+            mockUserAlbums.delete(albumId);
+            send(204, null);
+            return;
+          }
+
+          send(405, { error: "Method not allowed." });
           return;
         }
 

@@ -164,7 +164,12 @@
 
   function isFavoriteAlbum(album) {
     const interaction = getInteractionByAlbum(album);
-    return Boolean(interaction?.favorite);
+    if (!interaction) {
+      return false;
+    }
+    const value =
+      interaction.favorited !== undefined ? interaction.favorited : interaction.favorite;
+    return Boolean(value);
   }
 
   function getAlbumRating(album) {

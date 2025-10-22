@@ -9,14 +9,17 @@ export class ApiError extends Error {
 }
 
 async function request(path, options = {}) {
-  const headers = options.headers || {};
-  const rest = { ...options, headers };
+  const { headers, body, ...restOptions } = options;
+  const requestInit = {
+    ...restOptions,
+    headers,
+  };
 
-  if (options.body !== undefined) {
-    rest.body = options.body;
+  if (body !== undefined) {
+    requestInit.body = body;
   }
 
-  const response = await fetch(API_BASE + path, rest);
+  const response = await fetch(API_BASE + path, requestInit);
   const text = await response.text();
   let data = null;
 
@@ -133,9 +136,9 @@ export async function updateContent(token, content) {
 }
 
 export async function fetchAlbum(id, { token } = {}) {
-  const albumId = id ? `/albums/${encodeURIComponent(id)}` : "/album";
+  const query = id ? `?id=${encodeURIComponent(id)}` : "";
   const headers = token ? jsonHeaders({ token }) : undefined;
-  const data = await request(albumId, {
+  const data = await request(`/album${query}`, {
     method: "GET",
     headers,
   });
@@ -174,15 +177,15 @@ export async function fetchUserAlbums(token) {
   }
   const headers = jsonHeaders({ token });
   try {
-    const data = await request("/me/albums", {
+    const data = await request("/me/albums/preferences", {
       method: "GET",
       headers,
     });
+    if (data && typeof data === "object" && Array.isArray(data.preferences)) {
+      return data.preferences;
+    }
     if (Array.isArray(data)) {
       return data;
-    }
-    if (data && typeof data === "object" && Array.isArray(data.albums)) {
-      return data.albums;
     }
     return [];
   } catch (err) {
@@ -193,47 +196,62 @@ export async function fetchUserAlbums(token) {
   }
 }
 
-async function updateAlbumPreference({ token, albumId, payload }) {
+async function updateAlbumPreference({ token, albumId, rating, favorited }) {
   if (!token) {
     throw new Error("Authentication required to update preferences.");
   }
   if (!albumId) {
     throw new Error("Album identifier is required.");
   }
-  const headers = jsonHeaders({ token, includeContentType: true });
-
-  const data = await request(`/me/albums/${encodeURIComponent(albumId)}/preference`, {
-    method: "PUT",
-    headers,
-    body: JSON.stringify(payload),
-  });
-
-  if (data && typeof data === "object") {
-    return {
-      rating: data.rating ?? data.preferredRating ?? null,
-      favorite: data.favorite ?? Boolean(data.isFavorite),
-      album: data.album ? normalizeAlbum(data.album) : undefined,
-    };
+  const normalizedFavorite =
+    favorited !== undefined ? Boolean(favorited) : false;
+  let normalizedRating = null;
+  if (rating === null || rating === undefined) {
+    normalizedRating = null;
+  } else {
+    const numeric = Number(rating);
+    normalizedRating = Number.isFinite(numeric) ? numeric : null;
   }
 
+  const headers = jsonHeaders({ token, includeContentType: true });
+
+  await request(`/me/albums/${encodeURIComponent(albumId)}/preference`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({
+      rating: normalizedRating,
+      favorited: normalizedFavorite,
+    }),
+  });
+
   return {
-    rating: payload?.rating ?? null,
-    favorite: payload?.favorite ?? false,
+    rating: normalizedRating,
+    favorited: normalizedFavorite,
   };
 }
 
-export async function favoriteAlbum({ token, albumId, favorite }) {
+export async function favoriteAlbum({ token, albumId, favorite, rating }) {
+  let ratingValue = null;
+  if (rating !== null && rating !== undefined) {
+    const numeric = Number(rating);
+    ratingValue = Number.isFinite(numeric) ? numeric : null;
+  }
+
   const result = await updateAlbumPreference({
     token,
     albumId,
-    payload: {
-      favorite: Boolean(favorite),
-    },
+    favorited: Boolean(favorite),
+    rating: ratingValue,
   });
-  return { supported: true, favorite: Boolean(result.favorite) };
+  return {
+    supported: true,
+    favorite: Boolean(result.favorited),
+    favorited: Boolean(result.favorited),
+    rating: result.rating,
+  };
 }
 
-export async function rateAlbum({ token, albumId, rating }) {
+export async function rateAlbum({ token, albumId, rating, favorite = false }) {
   if (rating !== null && rating !== undefined) {
     const value = Number(rating);
     if (!Number.isFinite(value) || value < 1 || value > 5) {
@@ -244,10 +262,13 @@ export async function rateAlbum({ token, albumId, rating }) {
   const result = await updateAlbumPreference({
     token,
     albumId,
-    payload: {
-      rating: rating === null || rating === undefined ? null : Number(rating),
-    },
+    favorited: Boolean(favorite),
+    rating: rating === null || rating === undefined ? null : Number(rating),
   });
 
-  return { supported: true, rating: result.rating ?? null };
+  return {
+    supported: true,
+    rating: result.rating ?? null,
+    favorited: Boolean(result.favorited),
+  };
 }
