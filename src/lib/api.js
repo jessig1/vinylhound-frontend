@@ -1,4 +1,139 @@
-const API_BASE = "/api";
+const rawApiBase = import.meta.env?.VITE_API_BASE_URL ?? "/api";
+
+let API_BASE_ORIGIN = "";
+let API_BASE_PATH = "/api";
+
+if (typeof rawApiBase === "string" && rawApiBase.trim()) {
+  const trimmed = rawApiBase.trim();
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const parsed = new URL(trimmed);
+      API_BASE_ORIGIN = `${parsed.protocol}//${parsed.host}`;
+      API_BASE_PATH = parsed.pathname || "/";
+    } catch (err) {
+      console.warn("Invalid VITE_API_BASE_URL, falling back to /api:", err);
+      API_BASE_PATH = "/api";
+      API_BASE_ORIGIN = "";
+    }
+  } else {
+    API_BASE_PATH = trimmed;
+  }
+}
+
+if (!API_BASE_PATH.startsWith("/")) {
+  API_BASE_PATH = `/${API_BASE_PATH}`;
+}
+if (API_BASE_PATH !== "/" && API_BASE_PATH.endsWith("/")) {
+  API_BASE_PATH = API_BASE_PATH.replace(/\/+$/, "");
+}
+if (API_BASE_PATH === "/") {
+  API_BASE_PATH = "";
+}
+
+function parseDurationValue(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === "number") {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) && numeric >= 0 ? Math.round(numeric) : null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const colonMatch = trimmed.match(/^(\d+):([0-5]?\d)(?::([0-5]?\d))?$/);
+    if (colonMatch) {
+      const hasHours = colonMatch[3] !== undefined;
+      const hours = hasHours ? Number(colonMatch[1]) : 0;
+      const minutes = Number(hasHours ? colonMatch[2] : colonMatch[1]);
+      const seconds = Number(hasHours ? colonMatch[3] : colonMatch[2]);
+      const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+      return Number.isFinite(totalSeconds) && totalSeconds >= 0 ? totalSeconds : null;
+    }
+    const numeric = Number(trimmed);
+    return Number.isFinite(numeric) && numeric >= 0 ? Math.round(numeric) : null;
+  }
+  return null;
+}
+
+function normalizeTrackEntry(entry, index) {
+  const fallbackTitle = `Track ${index + 1}`;
+  if (entry === null || entry === undefined) {
+    return null;
+  }
+  if (typeof entry === "string") {
+    const title = entry.trim() || fallbackTitle;
+    return {
+      id: `track-${index}`,
+      title,
+      lengthSeconds: null,
+      lengthLabel: null,
+    };
+  }
+  if (typeof entry === "object") {
+    const title =
+      (typeof entry.title === "string" && entry.title.trim()) ||
+      (typeof entry.name === "string" && entry.name.trim()) ||
+      fallbackTitle;
+    const lengthLabelCandidate =
+      (typeof entry.length === "string" && entry.length.trim()) ||
+      (typeof entry.durationFormatted === "string" && entry.durationFormatted.trim()) ||
+      (typeof entry.formattedDuration === "string" && entry.formattedDuration.trim()) ||
+      null;
+    const lengthSeconds =
+      parseDurationValue(entry.lengthSeconds) ??
+      parseDurationValue(entry.length_seconds) ??
+      parseDurationValue(entry.durationSeconds) ??
+      parseDurationValue(entry.duration_seconds) ??
+      parseDurationValue(entry.duration) ??
+      null;
+    return {
+      id: entry.id ?? entry.trackId ?? entry.track_id ?? `track-${index}`,
+      title,
+      lengthSeconds,
+      lengthLabel: lengthLabelCandidate,
+    };
+  }
+  return null;
+}
+
+function normalizeTrackList(list) {
+  if (!Array.isArray(list)) {
+    return [];
+  }
+  const normalized = [];
+  for (let i = 0; i < list.length; i += 1) {
+    const entry = normalizeTrackEntry(list[i], i);
+    if (entry) {
+      normalized.push(entry);
+    }
+  }
+  return normalized;
+}
+
+function normalizeArtistList(input) {
+  if (!input) {
+    return [];
+  }
+  const source = Array.isArray(input) ? input : [input];
+  return source
+    .map((item) => {
+      if (typeof item === "string") {
+        return item.trim();
+      }
+      if (item && typeof item === "object") {
+        return (
+          (typeof item.name === "string" && item.name.trim()) ||
+          (typeof item.fullName === "string" && item.fullName.trim()) ||
+          [item.firstName, item.lastName].filter(Boolean).join(" ").trim()
+        );
+      }
+      return null;
+    })
+    .filter((value) => typeof value === "string" && value);
+}
 
 export class ApiError extends Error {
   constructor(message, status) {
@@ -6,6 +141,43 @@ export class ApiError extends Error {
     this.name = "ApiError";
     this.status = status;
   }
+}
+
+function buildRequestUrl(path) {
+  if (typeof path === "string" && /^https?:\/\//i.test(path)) {
+    return path;
+  }
+
+  const normalizedPath = `/${String(path || "").replace(/^\/+/, "")}`;
+
+  const versionPrefix = "/v1";
+  let relativePath = normalizedPath;
+
+  if (API_BASE_PATH && API_BASE_PATH.endsWith(versionPrefix) && normalizedPath.startsWith(`${versionPrefix}/`)) {
+    relativePath = normalizedPath.slice(versionPrefix.length);
+    if (!relativePath.startsWith("/")) {
+      relativePath = `/${relativePath}`;
+    }
+  }
+
+  let fullPath = relativePath;
+
+  if (API_BASE_PATH) {
+    const alreadyPrefixed =
+      relativePath === API_BASE_PATH || relativePath.startsWith(`${API_BASE_PATH}/`);
+    if (!alreadyPrefixed) {
+      fullPath = `${API_BASE_PATH}${relativePath}`;
+    } else {
+      fullPath = relativePath;
+    }
+  }
+
+  fullPath = fullPath.replace(/\/{2,}/g, "/");
+
+  if (API_BASE_ORIGIN) {
+    return `${API_BASE_ORIGIN}${fullPath}`;
+  }
+  return fullPath;
 }
 
 async function request(path, options = {}) {
@@ -19,7 +191,8 @@ async function request(path, options = {}) {
     requestInit.body = body;
   }
 
-  const response = await fetch(API_BASE + path, requestInit);
+  const requestUrl = buildRequestUrl(path);
+  const response = await fetch(requestUrl, requestInit);
   const text = await response.text();
   let data = null;
 
@@ -44,6 +217,30 @@ async function request(path, options = {}) {
   return data;
 }
 
+async function requestWithFallback(paths, options = {}) {
+  const candidates = Array.isArray(paths) ? paths : [paths];
+  let lastError = null;
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    try {
+      return await request(candidate, options);
+    } catch (err) {
+      const isLast = index === candidates.length - 1;
+      if (err instanceof ApiError && err.status === 404 && !isLast) {
+        lastError = err;
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+  throw new Error("No request candidates were provided.");
+}
+
 function jsonHeaders(options = {}) {
   const headers = new Headers();
   if (options.includeContentType) {
@@ -60,12 +257,13 @@ function normalizeAlbum(raw) {
     return raw;
   }
 
-  const tracks =
+  const rawTracks =
     Array.isArray(raw.tracks) && raw.tracks.length
       ? raw.tracks
       : Array.isArray(raw.trackList)
       ? raw.trackList
       : [];
+  const tracks = normalizeTrackList(rawTracks);
 
   const genres =
     Array.isArray(raw.genres) && raw.genres.length
@@ -82,6 +280,18 @@ function normalizeAlbum(raw) {
       ? raw.averageRating
       : null;
 
+  const cover =
+    raw.coverUrl ??
+    raw.cover_url ??
+    raw.cover ??
+    raw.image ??
+    raw.artwork ??
+    raw.artworkUrl ??
+    raw.thumbnail ??
+    null;
+
+  const artists = normalizeArtistList(raw.artists);
+
   return {
     ...raw,
     id:
@@ -90,7 +300,12 @@ function normalizeAlbum(raw) {
       raw._id ??
       raw.slug ??
       (raw.artist && raw.title ? `${raw.artist}-${raw.title}` : raw.title ?? raw.artist ?? null),
+    cover,
+    coverUrl: cover,
+    artwork: cover ?? raw.artwork ?? raw.artworkUrl ?? null,
+    image: cover ?? raw.image ?? null,
     artist: raw.artist ?? raw.album?.artist ?? "",
+    artists,
     title: raw.title ?? raw.album?.title ?? "",
     releaseYear,
     rating,
@@ -99,9 +314,11 @@ function normalizeAlbum(raw) {
   };
 }
 
+export { normalizeAlbum };
+
 export async function signup(payload) {
   const headers = jsonHeaders({ includeContentType: true });
-  await request("/signup", {
+  await requestWithFallback(["/v1/auth/signup", "/signup"], {
     method: "POST",
     headers,
     body: JSON.stringify(payload),
@@ -110,7 +327,7 @@ export async function signup(payload) {
 
 export async function login(credentials) {
   const headers = jsonHeaders({ includeContentType: true });
-  const data = await request("/login", {
+  const data = await requestWithFallback(["/v1/auth/login", "/login"], {
     method: "POST",
     headers,
     body: JSON.stringify(credentials),
@@ -120,15 +337,25 @@ export async function login(credentials) {
 
 export async function fetchContent(token) {
   const headers = jsonHeaders({ token });
-  return await request("/me/content", {
-    method: "GET",
-    headers,
-  });
+  const response = await requestWithFallback(
+    ["/v1/users/content", "/me/content"],
+    {
+      method: "GET",
+      headers,
+    }
+  );
+  if (Array.isArray(response)) {
+    return response;
+  }
+  if (response && typeof response === "object" && Array.isArray(response.content)) {
+    return response.content;
+  }
+  return [];
 }
 
 export async function updateContent(token, content) {
   const headers = jsonHeaders({ token, includeContentType: true });
-  await request("/me/content", {
+  await requestWithFallback(["/v1/users/content", "/me/content"], {
     method: "PUT",
     headers,
     body: JSON.stringify({ content }),
@@ -136,12 +363,20 @@ export async function updateContent(token, content) {
 }
 
 export async function fetchAlbum(id, { token } = {}) {
-  const query = id ? `?id=${encodeURIComponent(id)}` : "";
   const headers = token ? jsonHeaders({ token }) : undefined;
-  const data = await request(`/album${query}`, {
-    method: "GET",
-    headers,
-  });
+  if (!id) {
+    const albums = await fetchAlbums({ token });
+    return Array.isArray(albums) && albums.length ? albums[0] : null;
+  }
+
+  const encodedId = encodeURIComponent(id);
+  const data = await requestWithFallback(
+    [`/v1/albums/${encodedId}`, `/album?id=${encodedId}`],
+    {
+      method: "GET",
+      headers,
+    }
+  );
 
   if (data && typeof data === "object") {
     if ("album" in data && data.album) {
@@ -155,7 +390,7 @@ export async function fetchAlbum(id, { token } = {}) {
 
 export async function fetchAlbums({ token } = {}) {
   const headers = token ? jsonHeaders({ token }) : undefined;
-  const data = await request("/albums", {
+  const data = await requestWithFallback(["/v1/albums", "/albums"], {
     method: "GET",
     headers,
   });
@@ -271,4 +506,50 @@ export async function rateAlbum({ token, albumId, rating, favorite = false }) {
     rating: result.rating ?? null,
     favorited: Boolean(result.favorited),
   };
+}
+
+function normalizePlaylist(raw) {
+  if (!raw || typeof raw !== "object") {
+    return raw;
+  }
+  const songs = Array.isArray(raw.songs)
+    ? raw.songs.map((song) => ({
+        id: song.id ?? song.song_id ?? null,
+        title: song.title ?? "",
+        artist: song.artist ?? "",
+        album: song.album ?? "",
+        lengthSeconds:
+          song.lengthSeconds ??
+          song.length_seconds ??
+          song.duration ??
+          0,
+        genre: song.genre ?? "",
+      }))
+    : [];
+
+  return {
+    ...raw,
+    id: raw.id ?? raw.playlist_id ?? null,
+    title: raw.title ?? "Untitled playlist",
+    owner: raw.owner ?? "Unknown curator",
+    createdAt: raw.created_at ?? raw.createdAt ?? null,
+    songCount: raw.song_count ?? raw.songCount ?? songs.length,
+    songs,
+  };
+}
+
+export async function fetchPlaylists() {
+  const data = await request("/v1/playlists", {
+    method: "GET",
+  });
+
+  if (Array.isArray(data)) {
+    return data.map(normalizePlaylist);
+  }
+
+  if (data && typeof data === "object" && Array.isArray(data.playlists)) {
+    return data.playlists.map(normalizePlaylist);
+  }
+
+  return [];
 }

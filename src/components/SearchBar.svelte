@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from "svelte";
+  import { createEventDispatcher, onMount } from "svelte";
   import { fetchAlbums, ApiError } from "../lib/api";
   import { sampleAlbums } from "../lib/sampleAlbums";
 
@@ -13,6 +13,7 @@
   let inputRef;
   let panelRef;
   let lastToken = null;
+  const dispatch = createEventDispatcher();
 
   const TYPE_PRIORITY = {
     album: 0,
@@ -30,55 +31,87 @@
 
   function buildEntries(albums = []) {
     const output = [];
-    const artistSeen = new Set();
+    const artistEntries = new Map();
+
     for (const album of albums) {
-      if (!album) {
+      if (!album || typeof album !== "object") {
         continue;
       }
+
       const albumTitle = (album.title || "").trim() || "Untitled album";
       const albumArtist = (album.artist || "").trim() || "Unknown artist";
-      const yearFragment = album.releaseYear ? ` · ${album.releaseYear}` : "";
-      const albumId = album.id || sanitizeKey(`${albumArtist}-${albumTitle}`) || uniqueId("album");
+      const yearFragment = album.releaseYear ? ` - ${album.releaseYear}` : "";
+      const normalizedAlbumKey = sanitizeKey(`${albumArtist}-${albumTitle}`);
+      const albumId =
+        album.id ??
+        album._id ??
+        album.slug ??
+        (normalizedAlbumKey || uniqueId("album"));
+      const albumKey = normalizedAlbumKey || albumId;
 
       output.push({
         id: `album-${albumId}`,
         type: "album",
         title: albumTitle,
-        description: `Album · ${albumArtist}${yearFragment}`,
-        searchText: `${albumTitle} ${albumArtist} album ${album.releaseYear ?? ""}`.toLowerCase(),
+        description: `Album - ${albumArtist}${yearFragment}`,
+        searchText: `${albumTitle} ${albumArtist} album`.toLowerCase(),
+        albumId,
+        album,
+        artist: albumArtist,
+        releaseYear: album.releaseYear ?? null,
+        key: albumKey,
       });
 
       const artistKey = albumArtist.toLowerCase();
-      if (artistKey && !artistSeen.has(artistKey)) {
-        artistSeen.add(artistKey);
-        output.push({
-          id: `artist-${sanitizeKey(albumArtist)}`,
+      if (artistKey && !artistEntries.has(artistKey)) {
+        const normalizedArtistKey = sanitizeKey(albumArtist) || uniqueId("artist");
+        const artistEntry = {
+          id: `artist-${normalizedArtistKey}`,
           type: "artist",
           title: albumArtist,
-          description: `Artist · Featured on “${albumTitle}”`,
-          searchText: `${albumArtist} artist ${albumTitle}`.toLowerCase(),
-        });
+          description: `Artist - Featured on "${albumTitle}"`,
+          searchText: `${albumArtist} artist`.toLowerCase(),
+          artist: albumArtist,
+          albums: [album],
+          key: normalizedArtistKey,
+        };
+        artistEntries.set(artistKey, artistEntry);
+        output.push(artistEntry);
+      } else if (artistKey && artistEntries.has(artistKey)) {
+        artistEntries.get(artistKey).albums.push(album);
       }
 
       if (Array.isArray(album.tracks)) {
         album.tracks.forEach((track, index) => {
-          const name = (track || "").trim();
+          const name =
+            typeof track === "string"
+              ? track.trim()
+              : (track?.title ?? track?.name ?? "").trim();
+
           if (!name) {
             return;
           }
+
+          const songKey = `song-${albumId}-${index}`;
           output.push({
-            id: `song-${albumId}-${index}`,
+            id: songKey,
             type: "song",
             title: name,
-            description: `Song · ${albumArtist} · ${albumTitle}`,
+            description: `Song - ${albumArtist} - ${albumTitle}`,
             searchText: `${name} ${albumArtist} ${albumTitle} song`.toLowerCase(),
+            albumId,
+            album,
+            track,
+            trackIndex: index,
+            artist: albumArtist,
+            key: songKey,
           });
         });
       }
     }
+
     return output;
   }
-
   async function loadCatalog(currentToken) {
     loading = true;
     error = "";
@@ -186,6 +219,7 @@
 
   function handleInput(event) {
     query = event.currentTarget.value;
+    dispatch("input", { query });
     if (query.trim()) {
       open = true;
     }
@@ -195,7 +229,40 @@
     if (event.key === "Escape") {
       closePanel();
       inputRef?.blur();
+    } else if (event.key === "Enter") {
+      const term = query.trim();
+      if (term) {
+        event.preventDefault();
+        dispatch("submit", { query: term });
+      }
     }
+  }
+
+  export function setQuery(value = "") {
+    query = value;
+    dispatch("input", { query });
+    if (query.trim()) {
+      open = true;
+    } else {
+      open = false;
+    }
+    setTimeout(() => {
+      inputRef?.focus();
+    }, 0);
+  }
+
+  function selectResult(item) {
+    if (!item) {
+      return;
+    }
+    const detail = {
+      item,
+      query: query.trim(),
+    };
+    dispatch("select", detail);
+    query = item.title;
+    dispatch("input", { query });
+    closePanel();
   }
 </script>
 
@@ -222,7 +289,7 @@
   {#if open}
     <div class="search__panel" bind:this={panelRef}>
       {#if loading}
-        <div class="search__status">Loading catalogue…</div>
+        <div class="search__status">Loading catalogue...</div>
       {:else if error}
         <div class="search__status search__status--error">{error}</div>
       {:else if !normalizedQuery}
@@ -233,10 +300,10 @@
         <ul class="search__results">
           {#each filteredResults as item (item.id)}
             <li>
-              <div class="result">
+              <button type="button" class="result" on:click={() => selectResult(item)}>
                 <span class="result__title">{item.title}</span>
                 <span class="result__meta">{item.description}</span>
-              </div>
+              </button>
             </li>
           {/each}
         </ul>
@@ -335,10 +402,21 @@
     padding: 0.65rem 0.75rem;
     border-radius: 0.75rem;
     transition: background 0.2s ease;
+    border: none;
+    background: transparent;
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
   }
 
   .result:hover {
     background: rgba(79, 70, 229, 0.08);
+  }
+
+  .result:focus-visible {
+    background: rgba(79, 70, 229, 0.12);
+    outline: 2px solid rgba(79, 70, 229, 0.45);
+    outline-offset: 2px;
   }
 
   .result__title {
@@ -359,3 +437,4 @@
     }
   }
 </style>
+

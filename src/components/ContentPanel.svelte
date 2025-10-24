@@ -35,6 +35,27 @@
     const numeric = Number(raw);
     return Number.isFinite(numeric) ? numeric : null;
   }
+
+  function selectAlbum(item) {
+    if (!item) {
+      return;
+    }
+    const id = albumId(item);
+    const album = item?.album ?? null;
+    const key =
+      item?.key ??
+      album?.id ??
+      album?.slug ??
+      (album?.artist && album?.title ? `${album.artist} - ${album.title}` : null) ??
+      (typeof id === "string" ? id : null);
+    dispatch("selectalbum", {
+      albumId: id,
+      album,
+      key,
+      title: albumTitle(item),
+      artist: albumArtist(item),
+    });
+  }
 </script>
 
 <section class="panel">
@@ -76,8 +97,10 @@
             <ul>
               {#each favoriteAlbums as item (albumId(item))}
                 <li>
-                  <span class="album-card__title">{albumTitle(item)}</span>
-                  <span class="album-card__artist">{albumArtist(item)}</span>
+                  <button type="button" class="album-card__item" on:click={() => selectAlbum(item)}>
+                    <span class="album-card__title">{albumTitle(item)}</span>
+                    <span class="album-card__artist">{albumArtist(item)}</span>
+                  </button>
                 </li>
               {/each}
             </ul>
@@ -90,11 +113,13 @@
             <ul>
               {#each ratedAlbums as item (albumId(item))}
                 <li>
-                  <span class="album-card__title">{albumTitle(item)}</span>
-                  <span class="album-card__artist">{albumArtist(item)}</span>
-                  {#if albumRating(item)}
-                    <span class="album-card__rating">{albumRating(item)} / 5</span>
-                  {/if}
+                  <button type="button" class="album-card__item" on:click={() => selectAlbum(item)}>
+                    <span class="album-card__title">{albumTitle(item)}</span>
+                    <span class="album-card__artist">{albumArtist(item)}</span>
+                    {#if albumRating(item)}
+                      <span class="album-card__rating">{albumRating(item)} / 5</span>
+                    {/if}
+                  </button>
                 </li>
               {/each}
             </ul>
@@ -190,11 +215,33 @@
   }
 
   .album-card li {
+    list-style: none;
+  }
+
+  .album-card__item {
     display: flex;
     flex-direction: column;
     gap: 0.2rem;
     font-size: 0.95rem;
     color: #1f2937;
+    background: transparent;
+    border: none;
+    text-align: left;
+    padding: 0.35rem 0.4rem;
+    border-radius: 0.65rem;
+    cursor: pointer;
+    transition: background 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .album-card__item:hover,
+  .album-card__item:focus-visible {
+    background: rgba(79, 70, 229, 0.1);
+    box-shadow: inset 0 0 0 1px rgba(79, 70, 229, 0.2);
+    outline: none;
+  }
+
+  .album-card__item:focus-visible {
+    box-shadow: inset 0 0 0 2px rgba(79, 70, 229, 0.25);
   }
 
   .album-card__title {

@@ -10,6 +10,14 @@
   let menuOpen = false;
   let menuButton;
   let menuRef;
+  let searchPanelOpen = false;
+  let mobileSearch;
+  let recentSearches = [];
+  const RECENT_SEARCHES_KEY = "vh_recent_searches";
+
+  function emitMenuToggle() {
+    dispatch("menutoggle");
+  }
 
   function handleLogout() {
     dispatch("logout");
@@ -37,6 +45,96 @@
     }
   }
 
+  function toggleSearchPanel() {
+    searchPanelOpen = !searchPanelOpen;
+    if (searchPanelOpen) {
+      setTimeout(() => {
+        mobileSearch?.setQuery("");
+      }, 0);
+    }
+  }
+
+  function closeSearchPanel() {
+    if (searchPanelOpen) {
+      searchPanelOpen = false;
+    }
+  }
+
+  function loadRecentSearches() {
+    if (typeof localStorage === "undefined") {
+      recentSearches = [];
+      return;
+    }
+    try {
+      const stored = localStorage.getItem(RECENT_SEARCHES_KEY);
+      if (!stored) {
+        recentSearches = [];
+        return;
+      }
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) {
+        recentSearches = parsed.filter((item) => typeof item === "string" && item.trim());
+      } else {
+        recentSearches = [];
+      }
+    } catch {
+      recentSearches = [];
+    }
+  }
+
+  function persistRecentSearches() {
+    if (typeof localStorage === "undefined") {
+      return;
+    }
+    try {
+      localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(recentSearches));
+    } catch {
+      // Ignore storage errors (e.g., quota exceeded)
+    }
+  }
+
+  function recordRecentSearch(term) {
+    const clean = term.trim();
+    if (!clean) {
+      return;
+    }
+    const normalized = clean.toLowerCase();
+    const filtered = recentSearches.filter((item) => item.toLowerCase() !== normalized);
+    recentSearches = [clean, ...filtered].slice(0, 5);
+    persistRecentSearches();
+  }
+
+  function handleSearchSubmit(event) {
+    const term = (event?.detail?.query || "").trim();
+    if (!term) {
+      return;
+    }
+    recordRecentSearch(term);
+  }
+
+  function handleSearchSelect(event) {
+    const detail = event?.detail ?? {};
+    const item = detail.item;
+    if (!item) {
+      return;
+    }
+    const query = (detail.query ?? item.title ?? "").trim();
+    if (query) {
+      recordRecentSearch(query);
+    }
+    dispatch("searchselect", detail);
+    mobileSearch?.setQuery?.(item.title ?? "");
+    closeSearchPanel();
+  }
+
+  function handleRecentSelect(term) {
+    recordRecentSearch(term);
+    searchPanelOpen = true;
+    setTimeout(() => {
+      mobileSearch?.setQuery(term);
+    }, 0);
+  }
+
   function handleProfileSelect() {
     closeMenu();
     navigate("profile");
@@ -45,6 +143,17 @@
   function handleLogoutSelect() {
     closeMenu();
     handleLogout();
+  }
+
+  function handleWindowKeydown(event) {
+    if (event.key === "Escape") {
+      if (menuOpen) {
+        closeMenu();
+      }
+      if (searchPanelOpen) {
+        closeSearchPanel();
+      }
+    }
   }
 
   function handleDocumentClick(event) {
@@ -60,15 +169,47 @@
 
   onMount(() => {
     document.addEventListener("click", handleDocumentClick, true);
+    window.addEventListener("keydown", handleWindowKeydown, true);
+    loadRecentSearches();
+    let mediaQuery;
+    const handleMediaChange = (event) => {
+      if (!event.matches) {
+        closeSearchPanel();
+      }
+    };
+    if (typeof window !== "undefined" && "matchMedia" in window) {
+      mediaQuery = window.matchMedia("(max-width: 920px)");
+      mediaQuery.addEventListener("change", handleMediaChange);
+    }
     return () => {
       document.removeEventListener("click", handleDocumentClick, true);
+      window.removeEventListener("keydown", handleWindowKeydown, true);
+      if (mediaQuery) {
+        mediaQuery.removeEventListener("change", handleMediaChange);
+      }
     };
   });
 
+  $: if (!token) {
+    closeMenu();
+    closeSearchPanel();
+  }
 </script>
 
 <header class="app-header">
   <div class="branding">
+    {#if token}
+      <button
+        type="button"
+        class="menu-toggle"
+        on:click={emitMenuToggle}
+        aria-label="Open navigation"
+      >
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+    {/if}
     <h1>
       <button
         type="button"
@@ -80,22 +221,27 @@
       </button>
     </h1>
     {#if token}
-      <nav aria-label="Primary">
-        <button
-          type="button"
-          class:selected={currentView === "albums"}
-          on:click={() => navigate("albums")}
-        >
-          Albums
-        </button>
-      </nav>
+      <div class="header-search">
+        <SearchBar
+          {token}
+          on:submit={handleSearchSubmit}
+          on:select={handleSearchSelect}
+        />
+      </div>
+      <button
+        type="button"
+        class="search-toggle"
+        on:click={toggleSearchPanel}
+        aria-label="Open search"
+      >
+        <svg viewBox="0 0 24 24" role="img" focusable="false">
+          <path
+            d="M16.5 14.5h-.79l-.28-.27a6.471 6.471 0 0 0 1.57-4.23A6.5 6.5 0 1 0 10.5 16.5c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 5L21.5 19.5l-5-5Zm-6 0A4.5 4.5 0 1 1 15 10a4.5 4.5 0 0 1-4.5 4.5Z"
+          />
+        </svg>
+      </button>
     {/if}
   </div>
-  {#if token}
-    <div class="search-container">
-      <SearchBar {token} />
-    </div>
-  {/if}
   {#if token}
     <div class="session">
       <button
@@ -129,6 +275,40 @@
   {/if}
 </header>
 
+{#if token && searchPanelOpen}
+  <div class="search-overlay" on:click={closeSearchPanel}></div>
+  <section class="mobile-search" role="dialog" aria-modal="true" aria-label="Search catalogue">
+    <header class="mobile-search__header">
+      <h2>Search</h2>
+      <button type="button" aria-label="Close search" on:click={closeSearchPanel}>
+        &times;
+      </button>
+    </header>
+    <div class="mobile-search__body">
+      <SearchBar
+        bind:this={mobileSearch}
+        {token}
+        on:submit={handleSearchSubmit}
+        on:select={handleSearchSelect}
+      />
+      <div class="mobile-search__recent">
+        <h3>Recent searches</h3>
+        {#if recentSearches.length}
+          <ul>
+            {#each recentSearches as term (term)}
+              <li>
+                <button type="button" on:click={() => handleRecentSelect(term)}>{term}</button>
+              </li>
+            {/each}
+          </ul>
+        {:else}
+          <p class="mobile-search__empty">No recent searches yet.</p>
+        {/if}
+      </div>
+    </div>
+  </section>
+{/if}
+
 <style>
   .app-header {
     display: flex;
@@ -146,9 +326,61 @@
     flex: 0 0 auto;
   }
 
-  .search-container {
-    flex: 1 1 320px;
-    min-width: 240px;
+  .menu-toggle {
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.25rem;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 0.75rem;
+    border: none;
+    background: rgba(15, 23, 42, 0.08);
+    cursor: pointer;
+    padding: 0.4rem;
+    transition: background 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .menu-toggle span {
+    display: block;
+    height: 2px;
+    border-radius: 999px;
+    background: #1f2937;
+    width: 100%;
+  }
+
+  .menu-toggle:hover,
+  .menu-toggle:focus-visible {
+    background: rgba(79, 70, 229, 0.16);
+    box-shadow: 0 0 0 1px rgba(79, 70, 229, 0.2);
+    outline: none;
+  }
+
+  .search-toggle {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 0.75rem;
+    border: none;
+    background: rgba(15, 23, 42, 0.08);
+    cursor: pointer;
+    padding: 0.4rem;
+    transition: background 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .search-toggle svg {
+    width: 1.35rem;
+    height: 1.35rem;
+    fill: #1f2937;
+  }
+
+  .search-toggle:hover,
+  .search-toggle:focus-visible {
+    background: rgba(79, 70, 229, 0.16);
+    box-shadow: 0 0 0 1px rgba(79, 70, 229, 0.2);
+    outline: none;
   }
 
   h1 {
@@ -171,33 +403,14 @@
     outline: none;
   }
 
-  nav {
-    display: flex;
-    gap: 0.75rem;
-    background: rgba(79, 70, 229, 0.08);
-    padding: 0.4rem;
-    border-radius: 999px;
+  .header-search {
+    flex: 1 1 320px;
+    max-width: 520px;
+    min-width: 240px;
   }
 
-  nav button {
-    border: none;
-    background: transparent;
-    color: #312e81;
-    padding: 0.4rem 1.1rem;
-    border-radius: 999px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.2s ease, color 0.2s ease;
-  }
-
-  nav button:hover {
-    background: rgba(79, 70, 229, 0.12);
-  }
-
-  nav button.selected {
-    background: #4f46e5;
-    color: #ffffff;
-    box-shadow: 0 10px 24px rgba(79, 70, 229, 0.25);
+  .header-search :global(.search) {
+    width: 100%;
   }
 
   .session {
@@ -208,6 +421,20 @@
     margin-left: auto;
   }
 
+  @media (max-width: 920px) {
+    .menu-toggle {
+      display: inline-flex;
+    }
+
+    .header-search {
+      display: none;
+    }
+
+    .search-toggle {
+      display: inline-flex;
+    }
+  }
+
   @media (max-width: 780px) {
     .app-header {
       flex-direction: column;
@@ -216,15 +443,6 @@
 
     .branding {
       justify-content: space-between;
-    }
-
-    nav {
-      width: 100%;
-      justify-content: space-between;
-    }
-
-    .search-container {
-      width: 100%;
     }
 
     .session {
@@ -313,5 +531,117 @@
     background: rgba(79, 70, 229, 0.08);
     color: #312e81;
     outline: none;
+  }
+
+  .search-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(2px);
+    z-index: 45;
+  }
+
+  .mobile-search {
+    position: fixed;
+    top: 6%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(92vw, 420px);
+    background: #ffffff;
+    border-radius: 1.2rem;
+    box-shadow: 0 30px 60px rgba(15, 23, 42, 0.25);
+    padding: 1.25rem 1.5rem 1.5rem;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .mobile-search__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .mobile-search__header h2 {
+    margin: 0;
+    font-size: 1.25rem;
+  }
+
+  .mobile-search__header button {
+    border: none;
+    background: transparent;
+    font-size: 1.75rem;
+    line-height: 1;
+    cursor: pointer;
+    color: rgba(15, 23, 42, 0.7);
+    border-radius: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    transition: background 0.2s ease, color 0.2s ease;
+  }
+
+  .mobile-search__header button:hover,
+  .mobile-search__header button:focus-visible {
+    background: rgba(79, 70, 229, 0.1);
+    color: #312e81;
+    outline: none;
+  }
+
+  .mobile-search__body {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .mobile-search__recent h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.95rem;
+    color: rgba(15, 23, 42, 0.8);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .mobile-search__recent ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .mobile-search__recent li button {
+    width: 100%;
+    border: none;
+    background: rgba(79, 70, 229, 0.08);
+    color: #312e81;
+    border-radius: 0.75rem;
+    padding: 0.6rem 0.8rem;
+    text-align: left;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .mobile-search__recent li button:hover,
+  .mobile-search__recent li button:focus-visible {
+    background: rgba(79, 70, 229, 0.18);
+    color: #111827;
+    box-shadow: 0 12px 26px rgba(79, 70, 229, 0.18);
+    outline: none;
+  }
+
+  .mobile-search__empty {
+    margin: 0;
+    font-size: 0.95rem;
+    color: rgba(55, 65, 81, 0.75);
+  }
+
+  @media (min-width: 921px) {
+    .search-overlay,
+    .mobile-search {
+      display: none;
+    }
   }
 </style>
