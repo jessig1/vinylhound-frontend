@@ -167,6 +167,7 @@
     <section class="artist-detail__discography">
       <header>
         <h3>Discography</h3>
+        <h4>Albums</h4>
       </header>
       {#if previewAlbums.length}
         <ul class="artist-detail__preview-list">

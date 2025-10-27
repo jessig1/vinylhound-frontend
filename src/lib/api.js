@@ -113,6 +113,50 @@ function normalizeTrackList(list) {
   return normalized;
 }
 
+function normalizeSongList(list, { fallbackAlbumId = null } = {}) {
+  if (!Array.isArray(list)) {
+    return [];
+  }
+  const normalized = [];
+  for (let index = 0; index < list.length; index += 1) {
+    const raw = list[index];
+    if (!raw) {
+      continue;
+    }
+    const albumIdCandidate =
+      raw.albumId ??
+      raw.album_id ??
+      raw.albumID ??
+      (raw.album && typeof raw.album === "object" ? raw.album.id : null) ??
+      fallbackAlbumId ??
+      null;
+    const trackNumberCandidate =
+      raw.trackNumber ?? raw.track_num ?? raw.trackNum ?? raw.track_no ?? raw.position ?? null;
+    const normalizedEntry = normalizeTrackEntry(
+      {
+        ...raw,
+        title:
+          typeof raw.title === "string"
+            ? raw.title
+            : typeof raw.name === "string"
+            ? raw.name
+            : raw.title,
+      },
+      index
+    );
+    if (!normalizedEntry) {
+      continue;
+    }
+    const trackNumber = Number(trackNumberCandidate);
+    normalized.push({
+      ...normalizedEntry,
+      albumId: albumIdCandidate ?? null,
+      trackNumber: Number.isFinite(trackNumber) ? trackNumber : index + 1,
+    });
+  }
+  return normalized;
+}
+
 function normalizeArtistList(input) {
   if (!input) {
     return [];
@@ -273,11 +317,43 @@ function normalizeAlbum(raw) {
       : [];
 
   const releaseYear = raw.releaseYear ?? raw.year ?? raw.release_date ?? raw.releaseDate ?? null;
-  const rating =
-    raw.rating !== undefined && raw.rating !== null
-      ? raw.rating
-      : raw.averageRating !== undefined
-      ? raw.averageRating
+  const averageRatingCandidate =
+    raw.averageRating ??
+    raw.ratingAverage ??
+    raw.average_rating ??
+    raw.rating_average ??
+    raw.avgRating ??
+    raw.avg_rating ??
+    null;
+  const averageRatingNumeric = Number(averageRatingCandidate);
+  const normalizedAverageRating =
+    averageRatingCandidate !== null &&
+    averageRatingCandidate !== undefined &&
+    Number.isFinite(averageRatingNumeric)
+      ? averageRatingNumeric
+      : null;
+
+  const ratingCountCandidate =
+    raw.ratingCount ??
+    raw.rating_count ??
+    raw.ratingsCount ??
+    raw.ratings_count ??
+    null;
+  const ratingCountNumeric = Number(ratingCountCandidate);
+  const normalizedRatingCount =
+    ratingCountCandidate !== null &&
+    ratingCountCandidate !== undefined &&
+    Number.isFinite(ratingCountNumeric) &&
+    ratingCountNumeric >= 0
+      ? Math.trunc(ratingCountNumeric)
+      : 0;
+
+  const ratingCandidate =
+    raw.rating !== undefined && raw.rating !== null ? raw.rating : normalizedAverageRating;
+  const ratingNumeric = Number(ratingCandidate);
+  const normalizedRating =
+    ratingCandidate !== null && ratingCandidate !== undefined && Number.isFinite(ratingNumeric)
+      ? ratingNumeric
       : null;
 
   const cover =
@@ -308,7 +384,10 @@ function normalizeAlbum(raw) {
     artists,
     title: raw.title ?? raw.album?.title ?? "",
     releaseYear,
-    rating,
+    rating: normalizedRating,
+    averageRating: normalizedAverageRating,
+    ratingAverage: normalizedAverageRating,
+    ratingCount: normalizedRatingCount,
     tracks,
     genres,
   };
@@ -365,7 +444,7 @@ export async function updateContent(token, content) {
 export async function fetchAlbum(id, { token } = {}) {
   const headers = token ? jsonHeaders({ token }) : undefined;
   if (!id) {
-    const albums = await fetchAlbums({ token });
+    const albums = await fetchAlbums({ token, includeTracks: true });
     return Array.isArray(albums) && albums.length ? albums[0] : null;
   }
 
@@ -379,16 +458,69 @@ export async function fetchAlbum(id, { token } = {}) {
   );
 
   if (data && typeof data === "object") {
+    let albumPayload = data;
     if ("album" in data && data.album) {
-      return normalizeAlbum(data.album);
+      albumPayload = data.album;
     }
-    return normalizeAlbum(data);
+    const normalized = normalizeAlbum(albumPayload);
+    const albumId = normalized?.id ?? id ?? null;
+
+    if (albumId !== null && albumId !== undefined) {
+      try {
+        const tracks = await fetchSongs({ albumId, token });
+        if (Array.isArray(tracks) && tracks.length) {
+          const ordered = [...tracks].sort(
+            (a, b) => (a.trackNumber ?? 0) - (b.trackNumber ?? 0)
+          );
+          return {
+            ...normalized,
+            tracks: ordered,
+            songs: ordered,
+          };
+        }
+      } catch (err) {
+        console.warn("Unable to load songs for album", albumId, err);
+      }
+    }
+
+    return normalized;
   }
 
   return data;
 }
 
-export async function fetchAlbums({ token } = {}) {
+export async function fetchSongs({ albumId = null, artist = "", token } = {}) {
+  const headers = token ? jsonHeaders({ token }) : undefined;
+  const params = new URLSearchParams();
+
+  if (albumId !== null && albumId !== undefined && albumId !== "") {
+    params.set("album_id", albumId);
+  }
+  if (artist) {
+    params.set("artist", artist);
+  }
+
+  const query = params.toString() ? `?${params.toString()}` : "";
+
+  const data = await requestWithFallback(
+    [`/v1/songs${query}`, `/songs${query}`],
+    {
+      method: "GET",
+      headers,
+    }
+  );
+
+  let songs = [];
+  if (Array.isArray(data)) {
+    songs = data;
+  } else if (data && typeof data === "object" && Array.isArray(data.songs)) {
+    songs = data.songs;
+  }
+
+  return normalizeSongList(songs, { fallbackAlbumId: albumId ?? null });
+}
+
+export async function fetchAlbums({ token, includeTracks = false } = {}) {
   const headers = token ? jsonHeaders({ token }) : undefined;
   const data = await requestWithFallback(["/v1/albums", "/albums"], {
     method: "GET",
@@ -400,10 +532,73 @@ export async function fetchAlbums({ token } = {}) {
   }
 
   if (data && typeof data === "object" && Array.isArray(data.albums)) {
-    return data.albums.map(normalizeAlbum);
+    const albums = data.albums.map(normalizeAlbum);
+    if (!includeTracks) {
+      return albums;
+    }
+    return attachTracksToAlbums(albums, { token });
   }
 
-  return [];
+  if (!includeTracks) {
+    return Array.isArray(data) ? data.map(normalizeAlbum) : [];
+  }
+
+  return attachTracksToAlbums(Array.isArray(data) ? data.map(normalizeAlbum) : [], { token });
+}
+
+async function attachTracksToAlbums(albums, { token } = {}) {
+  if (!Array.isArray(albums) || !albums.length) {
+    return Array.isArray(albums) ? albums : [];
+  }
+
+  try {
+    const catalogueTracks = await fetchSongs({ token });
+    if (!Array.isArray(catalogueTracks) || !catalogueTracks.length) {
+      return albums;
+    }
+
+    const byAlbum = new Map();
+    for (const track of catalogueTracks) {
+      if (!track) {
+        continue;
+      }
+      const albumId = track.albumId ?? null;
+      if (albumId === null || albumId === undefined) {
+        continue;
+      }
+      const key = String(albumId);
+      if (!byAlbum.has(key)) {
+        byAlbum.set(key, []);
+      }
+      byAlbum.get(key).push(track);
+    }
+
+    for (const list of byAlbum.values()) {
+      list.sort((a, b) => (a.trackNumber ?? 0) - (b.trackNumber ?? 0));
+    }
+
+    return albums.map((album) => {
+      if (!album || typeof album !== "object") {
+        return album;
+      }
+      const key = album.id !== undefined && album.id !== null ? String(album.id) : null;
+      if (!key) {
+        return album;
+      }
+      const tracks = byAlbum.get(key);
+      if (Array.isArray(tracks) && tracks.length) {
+        return {
+          ...album,
+          tracks,
+          songs: tracks,
+        };
+      }
+      return album;
+    });
+  } catch (err) {
+    console.warn("Unable to attach tracks to album list", err);
+    return albums;
+  }
 }
 
 export async function fetchUserAlbums(token) {

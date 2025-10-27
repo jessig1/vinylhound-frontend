@@ -1,13 +1,19 @@
 <script>
   import { createEventDispatcher } from "svelte";
+  import PlaylistEditor from "./PlaylistEditor.svelte";
+  import { fetchPlaylist } from "../api/playlists.js";
 
   export let playlists = [];
   export let loading = false;
   export let error = "";
   export let username = "";
   export let selectedId = null;
+  export let token = null;
 
   const dispatch = createEventDispatcher();
+
+  let showEditor = false;
+  let editingPlaylist = null;
 
   function formatDate(value) {
     if (!value) {
@@ -67,12 +73,67 @@
       selectPlaylist(playlist);
     }
   }
+
+  function openCreatePlaylist() {
+    editingPlaylist = null;
+    showEditor = true;
+  }
+
+  async function openEditPlaylist(event, playlist) {
+    event.stopPropagation(); // Prevent card selection
+
+    try {
+      // Fetch full playlist details including songs
+      const fullPlaylist = await fetchPlaylist(playlist.id, token);
+
+      // Normalize the data to ensure consistent field names
+      editingPlaylist = {
+        id: fullPlaylist.id,
+        title: fullPlaylist.title,
+        owner: fullPlaylist.owner,
+        tags: fullPlaylist.tags || [],
+        isPublic: fullPlaylist.is_public || fullPlaylist.isPublic || false,
+        songs: fullPlaylist.songs ? fullPlaylist.songs.map(song => ({
+          id: song.id,
+          title: song.title,
+          artist: song.artist,
+          album: song.album || "",
+          duration: song.length_seconds || song.lengthSeconds || song.duration || 0,
+          lengthSeconds: song.length_seconds || song.lengthSeconds || song.duration || 0,
+          genre: song.genre || "",
+        })) : [],
+      };
+
+      showEditor = true;
+    } catch (err) {
+      console.error("Failed to load playlist for editing:", err);
+      error = "Failed to load playlist details";
+    }
+  }
+
+  function handleEditorSave(event) {
+    dispatch("playlistSaved", event.detail);
+  }
+
+  function handleEditorClose() {
+    showEditor = false;
+    editingPlaylist = null;
+  }
 </script>
 
 <section class="playlists">
   <header class="playlists__header">
-    <h2>{headerTitle}</h2>
-    <p>{headerSubtitle}</p>
+    <div class="playlists__header-content">
+      <div>
+        <h2>{headerTitle}</h2>
+        <p>{headerSubtitle}</p>
+      </div>
+      {#if normalizedUsername}
+        <button class="btn-create" on:click={openCreatePlaylist}>
+          + Create New Playlist
+        </button>
+      {/if}
+    </div>
   </header>
 
   {#if loading}
@@ -98,11 +159,36 @@
           on:keydown={(event) => handleCardKeydown(event, playlist)}
         >
           <header class="playlist-card__header">
-            <div>
-              <h3>{playlist.title}</h3>
-              <p class="playlist-card__meta">
-                Created {formatDate(playlist.createdAt)} • {ownerLabel(playlist.owner)}
-              </p>
+            <div class="playlist-card__title-section">
+              <div>
+                <div class="title-with-badge">
+                  <h3>{playlist.title}</h3>
+                  {#if playlist.is_public || playlist.isPublic}
+                    <span class="visibility-badge public">Public</span>
+                  {:else}
+                    <span class="visibility-badge private">Private</span>
+                  {/if}
+                </div>
+                <p class="playlist-card__meta">
+                  Created {formatDate(playlist.createdAt)} • {ownerLabel(playlist.owner)}
+                </p>
+                {#if playlist.tags && playlist.tags.length > 0}
+                  <div class="playlist-tags">
+                    {#each playlist.tags as tag (tag)}
+                      <span class="playlist-tag">{tag}</span>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+              {#if normalizedUsername && playlist.owner && playlist.owner.trim().toLowerCase() === normalizedUsername}
+                <button
+                  class="btn-edit"
+                  on:click={(e) => openEditPlaylist(e, playlist)}
+                  aria-label="Edit playlist"
+                >
+                  Edit
+                </button>
+              {/if}
             </div>
             <div class="playlist-card__stats">
               <span><strong>{playlist.songCount ?? playlist.songs?.length ?? 0}</strong> songs</span>
@@ -146,11 +232,28 @@
   {/if}
 </section>
 
+<PlaylistEditor
+  playlist={editingPlaylist}
+  isOpen={showEditor}
+  {token}
+  {username}
+  on:save={handleEditorSave}
+  on:close={handleEditorClose}
+/>
+
 <style>
   .playlists {
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
+  }
+
+  .playlists__header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
   }
 
   .playlists__header h2 {
@@ -163,6 +266,29 @@
     margin: 0.35rem 0 0;
     font-size: 1rem;
     color: rgba(55, 65, 81, 0.8);
+  }
+
+  .btn-create {
+    padding: 0.75rem 1.5rem;
+    background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
+  }
+
+  .btn-create:hover {
+    background: linear-gradient(135deg, #4338ca 0%, #4f46e5 100%);
+    box-shadow: 0 6px 16px rgba(79, 70, 229, 0.4);
+    transform: translateY(-1px);
+  }
+
+  .btn-create:active {
+    transform: translateY(0);
   }
 
   .playlists__state {
@@ -216,6 +342,12 @@
     gap: 1rem;
   }
 
+  .playlist-card__title-section {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+
   .playlist-card__header h3 {
     margin: 0;
     font-size: 1.4rem;
@@ -226,6 +358,74 @@
     margin: 0.35rem 0 0;
     color: rgba(55, 65, 81, 0.75);
     font-size: 0.95rem;
+  }
+
+  .btn-edit {
+    padding: 0.5rem 1rem;
+    background: rgba(79, 70, 229, 0.1);
+    color: #4f46e5;
+    border: 1px solid rgba(79, 70, 229, 0.3);
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+  }
+
+  .btn-edit:hover {
+    background: rgba(79, 70, 229, 0.15);
+    border-color: rgba(79, 70, 229, 0.5);
+    color: #4338ca;
+  }
+
+  .btn-edit:active {
+    background: rgba(79, 70, 229, 0.2);
+  }
+
+  .title-with-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .visibility-badge {
+    padding: 0.25rem 0.6rem;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .visibility-badge.public {
+    background-color: rgba(34, 197, 94, 0.15);
+    color: #15803d;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+  }
+
+  .visibility-badge.private {
+    background-color: rgba(107, 114, 128, 0.15);
+    color: #4b5563;
+    border: 1px solid rgba(107, 114, 128, 0.3);
+  }
+
+  .playlist-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+  }
+
+  .playlist-tag {
+    background-color: rgba(79, 70, 229, 0.12);
+    color: #4338ca;
+    padding: 0.25rem 0.6rem;
+    border-radius: 10px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    border: 1px solid rgba(79, 70, 229, 0.2);
   }
 
   .playlist-card__stats {

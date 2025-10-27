@@ -12,7 +12,7 @@
   const navItems = [
     { label: "Home", view: "news" },
     { label: "Artists", view: "artists" },
-    { label: "New Playlists", view: "playlists-new" },
+    { label: "My Playlists", view: "playlists" },
   ];
 
   function handleNavigate(view) {

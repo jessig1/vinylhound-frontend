@@ -1,7 +1,6 @@
 <script>
   import { createEventDispatcher, onMount } from "svelte";
   import { fetchAlbums, ApiError } from "../lib/api";
-  import { sampleAlbums } from "../lib/sampleAlbums";
 
   export let token = "";
 
@@ -116,7 +115,7 @@
     loading = true;
     error = "";
     try {
-      const albums = await fetchAlbums({ token: currentToken });
+      const albums = await fetchAlbums({ token: currentToken, includeTracks: true });
       if (currentToken !== token) {
         loading = false;
         return;
@@ -127,12 +126,12 @@
         loading = false;
         return;
       }
-      if (err instanceof ApiError && err.status === 404) {
-        entries = buildEntries(sampleAlbums);
-      } else {
+      if (!(err instanceof ApiError && err.status === 404)) {
         error = err?.message || "Unable to load search catalogue.";
-        entries = [];
+      } else {
+        error = "No catalogue results found.";
       }
+      entries = [];
     } finally {
       loading = false;
     }

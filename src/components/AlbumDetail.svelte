@@ -1,4 +1,15 @@
 <script>
+  import { createEventDispatcher } from "svelte";
+  import RatingStars from "./RatingStars.svelte";
+  import TrackItem from "./TrackItem.svelte";
+  import AddToPlaylistModal from "./AddToPlaylistModal.svelte";
+  import {
+    coverAltTextForAlbum,
+    discoverGenres,
+    discoverTrackList,
+    normalizeAlbumRating,
+  } from "../lib/albumDetailHelpers.js";
+
   export let album = {
     title: "Untitled album",
     artist: "Unknown artist",
@@ -10,67 +21,128 @@
 
   export let loading = false;
   export let error = "";
+  export let canInteract = false;
+  export let userRating = null;
+  export let albumId = null;
+  export let token = null;
 
-  const fallbackGenres = Array.isArray(album?.genres) ? album.genres : [];
-  const normalizedTracks = Array.isArray(album?.tracks) ? album.tracks : [];
+  let fallbackGenres = [];
+  let normalizedTracks = [];
+  let currentRating = null;
+  let showPlaylistModal = false;
+  let selectedTrack = null;
 
-  function coverAltText() {
-    const title = album?.title || "this album";
-    const artist = album?.artist || "unknown artist";
-    return `Cover art for ${title} by ${artist}`;
-  }
+  const dispatch = createEventDispatcher();
 
-  function trackTitle(track, index) {
-    if (!track) {
-      return `Track ${index + 1}`;
-    }
-    if (typeof track === "string") {
-      const trimmed = track.trim();
-      return trimmed || `Track ${index + 1}`;
-    }
-    if (typeof track === "object") {
-      const title =
-        (typeof track.title === "string" && track.title.trim()) ||
-        (typeof track.name === "string" && track.name.trim());
-      return title || `Track ${index + 1}`;
-    }
-    return `Track ${index + 1}`;
-  }
+  $: fallbackGenres = discoverGenres(album);
+  $: normalizedTracks = discoverTrackList(album);
+  $: currentRating = normalizeAlbumRating(userRating);
 
-  function trackLength(track) {
-    if (!track || typeof track !== "object") {
+  const coverAltText = () => coverAltTextForAlbum(album);
+
+  $: albumIdentifier =
+    albumId ??
+    album?.id ??
+    album?.albumId ??
+    album?._id ??
+    album?.slug ??
+    (album?.artist && album?.title ? `${album.artist}-${album.title}` : null);
+
+  function resolveAverageRating(record) {
+    if (!record || typeof record !== "object") {
       return null;
     }
-    const labelCandidates = [
-      track.lengthLabel,
-      track.length,
-      track.duration,
-      track.durationLabel,
-      track.formattedDuration,
+    const candidates = [
+      record.rating,
+      record.averageRating,
+      record.ratingAverage,
+      record.average_rating,
+      record.rating_average,
     ];
-    for (const entry of labelCandidates) {
-      if (typeof entry === "string" && entry.trim()) {
-        return entry.trim();
-      }
-    }
-    const numericCandidates = [
-      track.lengthSeconds,
-      track.length_seconds,
-      track.durationSeconds,
-      track.duration_seconds,
-      track.seconds,
-    ];
-    for (const candidate of numericCandidates) {
+    for (const candidate of candidates) {
       const numeric = Number(candidate);
-      if (Number.isFinite(numeric) && numeric >= 0) {
-        const minutes = Math.floor(numeric / 60);
-        const seconds = Math.floor(numeric % 60)
-          .toString()
-          .padStart(2, "0");
-        return `${minutes}:${seconds}`;
+      if (Number.isFinite(numeric)) {
+        return numeric;
       }
     }
     return null;
+  }
+
+  function resolveRatingCount(record) {
+    if (!record || typeof record !== "object") {
+      return 0;
+    }
+    const candidates = [
+      record.ratingCount,
+      record.rating_count,
+      record.ratingsCount,
+      record.ratings_count,
+    ];
+    for (const candidate of candidates) {
+      const numeric = Number(candidate);
+      if (Number.isFinite(numeric) && numeric >= 0) {
+        return Math.trunc(numeric);
+      }
+    }
+    return 0;
+  }
+
+  $: averageCommunityRating = resolveAverageRating(album);
+  $: communityRatingCount = resolveRatingCount(album);
+  $: communityRatingDisplay =
+    communityRatingCount > 0 ? formatCommunityRating(averageCommunityRating) : null;
+
+  function formatCommunityRating(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+      return null;
+    }
+    if (Number.isInteger(numeric)) {
+      return `${numeric}/5`;
+    }
+    return `${numeric.toFixed(1)}/5`;
+  }
+
+  function handleRatingChange(event) {
+    const next = normalizeAlbumRating(event?.detail?.rating);
+    currentRating = next;
+    dispatch("rate", {
+      albumId: albumIdentifier ?? null,
+      album,
+      rating: next,
+    });
+  }
+
+  function handleTrackRate(event) {
+    const { track, rating } = event.detail;
+    dispatch("rateTrack", {
+      track,
+      rating,
+      albumId: albumIdentifier ?? null,
+      album,
+    });
+  }
+
+  function handleAddToPlaylist(event) {
+    const { track } = event.detail;
+    selectedTrack = track;
+    showPlaylistModal = true;
+  }
+
+  function handlePlaylistModalSuccess(event) {
+    const { playlist, track, message } = event.detail;
+    dispatch("addToPlaylist", {
+      track,
+      playlist,
+      albumId: albumIdentifier ?? null,
+      album,
+      message,
+    });
+  }
+
+  function handlePlaylistModalClose() {
+    showPlaylistModal = false;
+    selectedTrack = null;
   }
 </script>
 
@@ -105,21 +177,53 @@
             </div>
           {/if}
         </div>
-      </div>
     </div>
+  </div>
+
+    <section class="album-detail__insights" aria-label="Album rating">
+      <div class="album-detail__rating">
+        <h3>Your rating</h3>
+        {#if canInteract}
+          <RatingStars value={currentRating} on:change={handleRatingChange} />
+          <p class="album-detail__rating-summary">
+            {#if currentRating}
+              You rated this album <strong>{currentRating}</strong> out of 5.
+            {:else}
+              Select a star rating to share your thoughts.
+            {/if}
+          </p>
+        {:else}
+          <p class="album-detail__rating-disabled">Sign in to rate this album.</p>
+        {/if}
+      </div>
+      <div class="album-detail__rating-meta" aria-label="Community rating">
+        <span class="label">Community rating</span>
+        {#if communityRatingDisplay && communityRatingCount > 0}
+          <span class="value">{communityRatingDisplay}</span>
+          <span class="meta">
+            Based on {communityRatingCount}
+            {communityRatingCount === 1 ? "rating" : "ratings"}
+          </span>
+        {:else}
+          <span class="value album-detail__rating-empty">No ratings yet</span>
+        {/if}
+      </div>
+    </section>
 
     <section class="album-detail__tracks" aria-label="Track list">
       <h3>Track list</h3>
       {#if normalizedTracks.length}
         <ol>
           {#each normalizedTracks as track, index (track?.id ?? track?.title ?? track ?? `track-${index}`)}
-            <li>
-              <span class="track__index">{index + 1}</span>
-              <span class="track__title">{trackTitle(track, index)}</span>
-              {#if trackLength(track)}
-                <span class="track__length">{trackLength(track)}</span>
-              {/if}
-            </li>
+            <TrackItem
+              {track}
+              trackNumber={index + 1}
+              album={album}
+              artist={album?.artist}
+              {canInteract}
+              on:rate={handleTrackRate}
+              on:addToPlaylist={handleAddToPlaylist}
+            />
           {/each}
         </ol>
       {:else}
@@ -128,6 +232,14 @@
     </section>
   {/if}
 </div>
+
+<AddToPlaylistModal
+  track={selectedTrack}
+  isOpen={showPlaylistModal}
+  {token}
+  on:success={handlePlaylistModalSuccess}
+  on:close={handlePlaylistModalClose}
+/>
 
 <style>
   .album-detail {
@@ -233,6 +345,76 @@
     color: #1f2937;
   }
 
+  .album-detail__insights {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    background: rgba(79, 70, 229, 0.08);
+    border-radius: 1rem;
+    padding: 1rem 1.2rem;
+  }
+
+  .album-detail__rating {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .album-detail__rating h3 {
+    margin: 0;
+    font-size: 1.2rem;
+    color: #1f2937;
+  }
+
+  .album-detail__rating-summary {
+    margin: 0;
+    font-size: 0.9rem;
+    color: rgba(55, 65, 81, 0.85);
+  }
+
+  .album-detail__rating-summary strong {
+    color: #f59e0b;
+  }
+
+  .album-detail__rating-disabled {
+    margin: 0;
+    font-size: 0.9rem;
+    color: rgba(55, 65, 81, 0.7);
+  }
+
+  .album-detail__rating-meta {
+    display: flex;
+    flex-direction: column;
+    background: rgba(255, 255, 255, 0.65);
+    border-radius: 0.85rem;
+    padding: 0.75rem 1rem;
+    gap: 0.3rem;
+  }
+
+  .album-detail__rating-meta .label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: rgba(71, 85, 105, 0.7);
+  }
+
+  .album-detail__rating-meta .value {
+    font-weight: 600;
+    color: #1f2937;
+  }
+
+  .album-detail__rating-meta .meta {
+    font-size: 0.82rem;
+    color: rgba(71, 85, 105, 0.8);
+  }
+
+  .album-detail__rating-empty {
+    font-weight: 500;
+    color: rgba(71, 85, 105, 0.75);
+  }
+
   .album-detail__tracks {
     display: flex;
     flex-direction: column;
@@ -254,39 +436,7 @@
     gap: 0.65rem;
   }
 
-  .album-detail__tracks li {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    align-items: center;
-    gap: 0.75rem;
-    background: rgba(228, 233, 243, 0.6);
-    border-radius: 0.75rem;
-    padding: 0.6rem 0.85rem;
-  }
-
-  .track__index {
-    width: 1.6rem;
-    height: 1.6rem;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 50%;
-    background: rgba(79, 70, 229, 0.3);
-    color: #312e81;
-    font-weight: 600;
-    font-size: 0.85rem;
-  }
-
-  .track__title {
-    font-weight: 600;
-    color: #111827;
-  }
-
-  .track__length {
-    font-variant-numeric: tabular-nums;
-    color: rgba(55, 65, 81, 0.8);
-    font-size: 0.9rem;
-  }
+  /* Track item styles are now in TrackItem.svelte */
 
   .album-detail__empty {
     margin: 0;
@@ -296,6 +446,10 @@
   @media (max-width: 640px) {
     .album-detail {
       padding: 1.75rem;
+    }
+
+    .album-detail__insights {
+      align-items: flex-start;
     }
 
     .album-detail__header {

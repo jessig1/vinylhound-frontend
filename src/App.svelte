@@ -1,15 +1,68 @@
 <script>
   import { onMount } from "svelte";
+  import { get } from "svelte/store";
+  import page from "page";
   import Header from "./components/Header.svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import FlashMessage from "./components/FlashMessage.svelte";
-  import AuthPanel from "./components/AuthPanel.svelte";
-  import ContentPanel from "./components/ContentPanel.svelte";
-  import AlbumDetail from "./components/AlbumDetail.svelte";
-  import NewsFeed from "./components/NewsFeed.svelte";
-  import PlaylistList from "./components/PlaylistList.svelte";
-  import ArtistList from "./components/ArtistList.svelte";
-  import ArtistDetail from "./components/ArtistDetail.svelte";
+
+  // Import views
+  import NewsView from "./views/NewsView.svelte";
+  import ProfileView from "./views/ProfileView.svelte";
+  import AlbumView from "./views/AlbumView.svelte";
+  import ArtistsView from "./views/ArtistsView.svelte";
+  import PlaylistsView from "./views/PlaylistsView.svelte";
+  import PlaceholderView from "./views/PlaceholderView.svelte";
+
+  // Import stores
+  import {
+    token,
+    activeUser,
+    isAuthenticated,
+    loadSession,
+    login as authLogin,
+    logout as authLogout,
+  } from "./stores/auth";
+  import {
+    currentView,
+    previousView,
+    sidebarOpen,
+    message,
+    messageKind,
+    loading,
+    setMessage,
+    clearMessage,
+    closeSidebar,
+    navigate,
+  } from "./stores/ui";
+  import {
+    content,
+    contentDraft,
+    resetContent,
+  } from "./stores/content";
+  import {
+    albumInteractions,
+    albumViewId,
+    albumViewData,
+    albumViewLoading,
+    albumViewError,
+    artists,
+    artistsLoading,
+    artistsError,
+    artistsInitialized,
+    selectedArtist,
+    applyAlbumInteractions,
+    updateAlbumEntry,
+    resetAlbumCollections,
+    resetAlbumView,
+  } from "./stores/albums";
+  import {
+    playlists,
+    selectedPlaylistId,
+    resetPlaylists,
+  } from "./stores/playlists";
+
+  // Import API functions
   import {
     signup as apiSignup,
     login as apiLogin,
@@ -22,38 +75,13 @@
     favoriteAlbum,
     rateAlbum,
     ApiError,
-  } from "./lib/api";
+  } from "./api";
   import { normalizeContent } from "./lib/content";
-  import { sampleAlbums, findSampleAlbum } from "./lib/sampleAlbums";
-  import { readSession, writeSession, clearSession } from "./lib/session";
 
-  let token = "";
-  let activeUser = "";
-  let content = [];
-  let contentDraft = "";
-  let loading = false;
-  let message = "";
-  let messageKind = "info";
-  let authPanel;
-  let currentView = "profile";
-  let albumInteractions = {};
-  let favoriteAlbums = [];
-  let ratedAlbums = [];
-  let sidebarOpen = false;
-  let playlists = [];
-  let playlistsLoading = false;
-  let playlistsError = "";
-  let selectedPlaylistId = null;
-  let selectedArtist = null;
-  let artists = [];
-  let artistsLoading = false;
-  let artistsError = "";
-  let artistsInitialized = false;
-  let previousView = "news";
-  let albumViewId = null;
-  let albumViewLoading = false;
-  let albumViewError = "";
-  let albumViewData = null;
+  // Import router utilities
+  import { buildRoute } from "./router";
+
+  // Sample playlists for sidebar
   const samplePlaylists = [
     { id: "sample-1", title: "Morning Warmup Jams", owner: "Editorial Team" },
     { id: "sample-2", title: "Late Night Loops", owner: "Vinyhound Radio" },
@@ -64,6 +92,49 @@
     { id: "sample-7", title: "Fresh Pressings", owner: "Editorial Team" },
   ];
 
+  let authPanel;
+
+  // Reactive playlist summaries for sidebar
+  $: normalizedUser = ($activeUser || "").trim().toLowerCase();
+  $: userPlaylists =
+    $playlists && normalizedUser
+      ? $playlists.filter(
+          (item) =>
+            item &&
+            typeof item.owner === "string" &&
+            item.owner.trim().toLowerCase() === normalizedUser
+        )
+      : [];
+  $: sidebarSource = userPlaylists.length ? userPlaylists : samplePlaylists;
+  $: playlistSummaries = sidebarSource.map((item, index) => {
+    const id = item.id != null ? `playlist-${item.id}` : `playlist-${index}`;
+    const ownerLabel =
+      normalizedUser && typeof item.owner === "string" && item.owner.trim().toLowerCase() === normalizedUser
+        ? "You"
+        : item.owner || "Unknown curator";
+    return {
+      id,
+      title: item.title || `Playlist ${index + 1}`,
+      owner: ownerLabel,
+    };
+  });
+
+  // Auto-load artists when view changes to artists
+  $: if ($currentView === "artists" && !$artistsInitialized && !$artistsLoading && !$artistsError) {
+    loadArtists({ silent: true });
+  }
+
+  onMount(() => {
+    const sessionLoaded = loadSession();
+    if (sessionLoaded) {
+      navigate("news");
+      loadContent({ silent: true });
+      loadUserAlbums({ silent: true });
+      loadPlaylists({ silent: true });
+    }
+  });
+
+  // Helper functions
   function sanitizeSlug(value = "") {
     return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
   }
@@ -193,7 +264,7 @@
       }
     }
 
-    const artists = [];
+    const artistsList = [];
     for (const entry of map.values()) {
       const sortedAlbums = [...entry.albums].sort((a, b) => {
         const yearA = a.releaseYear ?? -Infinity;
@@ -226,7 +297,7 @@
 
       const primaryImage = sortedAlbums.find((album) => album.cover)?.cover ?? null;
 
-      artists.push({
+      artistsList.push({
         name: entry.name,
         slug: entry.slug,
         genres: genreList,
@@ -241,423 +312,103 @@
       });
     }
 
-    return artists.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-  }
-
-  $: normalizedUser = (activeUser || "").trim().toLowerCase();
-  $: userPlaylists =
-    playlists && normalizedUser
-      ? playlists.filter(
-          (item) =>
-            item &&
-            typeof item.owner === "string" &&
-            item.owner.trim().toLowerCase() === normalizedUser
-        )
-      : [];
-  $: sidebarSource = userPlaylists.length ? userPlaylists : samplePlaylists;
-  $: playlistSummaries = sidebarSource.map((item, index) => {
-    const id = item.id != null ? `playlist-${item.id}` : `playlist-${index}`;
-    const ownerLabel =
-      normalizedUser && typeof item.owner === "string" && item.owner.trim().toLowerCase() === normalizedUser
-        ? "You"
-        : item.owner || "Unknown curator";
-    return {
-      id,
-      title: item.title || `Playlist ${index + 1}`,
-      owner: ownerLabel,
-    };
-  });
-  $: if (currentView === "artists" && !artistsInitialized && !artistsLoading && !artistsError) {
-    loadArtists({ silent: true });
-  }
-
-  onMount(() => {
-    const stored = readSession();
-    if (!stored) {
-      return;
-    }
-    token = stored.token;
-    activeUser = stored.username;
-    currentView = "news";
-    loadContent({ silent: true });
-    loadUserAlbums({ silent: true });
-    loadPlaylists({ silent: true });
-  });
-
-  function setMessage(value = "", kind = "info") {
-    message = value;
-    messageKind = kind;
-  }
-
-  function clearMessage() {
-    setMessage();
-  }
-
-  function resetAlbumCollections() {
-    albumInteractions = {};
-    favoriteAlbums = [];
-    ratedAlbums = [];
-  }
-
-  function applyAlbumInteractions(entries = []) {
-    const map = {};
-    for (const entry of entries) {
-      const albumId =
-        entry?.albumId ||
-        entry?.id ||
-        entry?.album?.id ||
-        entry?.album?._id ||
-        entry?.album?.slug ||
-        (entry?.album?.artist && entry?.album?.title
-          ? `${entry.album.artist} - ${entry.album.title}`
-          : null);
-      if (!albumId) {
-        continue;
-      }
-      const source = entry?.preference || entry;
-      const numericRating =
-        source?.rating !== undefined && source?.rating !== null && Number.isFinite(Number(source.rating))
-          ? Number(source.rating)
-          : null;
-      const favoritedValue =
-        source?.favorited !== undefined
-          ? Boolean(source.favorited)
-          : source?.favorite !== undefined
-          ? Boolean(source.favorite)
-          : false;
-      if (!favoritedValue && numericRating === null) {
-        continue;
-      }
-      map[albumId] = {
-        albumId,
-        favorite: favoritedValue,
-        favorited: favoritedValue,
-        rating: numericRating,
-        album: entry?.album || entry?.preference?.album || null,
-        title: entry?.title || entry?.album?.title || null,
-        artist: entry?.artist || entry?.album?.artist || null,
-      };
-    }
-    albumInteractions = map;
-    syncAlbumCollections();
-  }
-
-  function syncAlbumCollections() {
-    const entries = Object.values(albumInteractions || {});
-    favoriteAlbums = entries.filter((item) => item.favorite);
-    ratedAlbums = entries.filter((item) => Number.isFinite(item?.rating));
+    return artistsList.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   }
 
   async function execute(task, fallbackMessage) {
-    loading = true;
+    loading.set(true);
     try {
       await task();
       return true;
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        logout(false);
+        handleLogout(false);
         setMessage("Session expired. Please log in again.", "error");
       } else {
         setMessage(err?.message || fallbackMessage, "error");
       }
       return false;
     } finally {
-      loading = false;
+      loading.set(false);
     }
   }
 
-  function applySession(newToken, username) {
-    token = newToken;
-    activeUser = username;
-    if (newToken && username) {
-      writeSession({ token: newToken, username });
-    } else {
-      clearSession();
-    }
-  }
-
-  function logout(showMessage = true) {
-    applySession("", "");
-    content = [];
-    contentDraft = "";
-    currentView = "profile";
-    sidebarOpen = false;
-    playlists = [];
-    playlistsError = "";
-    artists = [];
-    artistsError = "";
-    artistsLoading = false;
-    artistsInitialized = false;
-    selectedArtist = null;
-    resetAlbumCollections();
-    resetAlbumView();
-    if (showMessage) {
-      setMessage("You have been signed out.", "info");
-    }
-  }
-
+  // Event handlers
   function handleNavigate(event) {
     const detail = event.detail || {};
     const nextView = detail.view || "profile";
-    if (!token && nextView !== "profile") {
-      if (currentView !== "profile") {
-        currentView = "profile";
-      }
+
+    // Check authentication
+    if (!$token && nextView !== "profile") {
+      page(buildRoute.profile());
       setMessage("Please log in or sign up to continue.", "info");
       return;
     }
-    if (currentView === nextView) {
-      selectedPlaylistId = detail.playlistId ?? selectedPlaylistId;
-      if (nextView === "artists") {
-        selectedArtist = null;
-      }
-      sidebarOpen = false;
-      return;
+
+    // Build the appropriate route
+    let route;
+    switch (nextView) {
+      case "profile":
+        route = buildRoute.profile();
+        break;
+      case "news":
+        route = buildRoute.news();
+        break;
+      case "album":
+        // Album requires an ID, handled separately
+        return;
+      case "artists":
+        route = buildRoute.artists();
+        break;
+      case "playlists":
+        if (detail.playlistId) {
+          route = buildRoute.playlist(detail.playlistId);
+        } else {
+          route = buildRoute.playlists();
+        }
+        break;
+      default:
+        route = buildRoute.home();
     }
-    previousView = currentView;
-    if (currentView === "album" && nextView !== "album") {
-      resetAlbumView();
-    }
-    currentView = nextView;
-    if (nextView === "artists") {
-      selectedArtist = null;
-    }
-    selectedPlaylistId = detail.playlistId ?? null;
-    sidebarOpen = false;
-    if (nextView !== "profile") {
-      clearMessage();
-    }
-    if (nextView === "playlists" && (!userPlaylists.length || !playlists.length)) {
+
+    // Navigate using page.js
+    page(route);
+
+    // Load playlists if needed
+    if (nextView === "playlists" && (!userPlaylists.length || !$playlists.length)) {
       loadPlaylists({ silent: true });
     }
   }
 
   function handleViewMorePlaylists() {
-    selectedPlaylistId = null;
+    selectedPlaylistId.set(null);
     handleNavigate({ detail: { view: "playlists" } });
   }
 
   function handleMenuToggle() {
-    sidebarOpen = !sidebarOpen;
+    sidebarOpen.update((open) => !open);
   }
 
   function handleSidebarClose() {
-    sidebarOpen = false;
+    closeSidebar();
   }
 
-  function handleSearchSelection(event) {
-    const item = event?.detail?.item;
-    if (!item) {
-      return;
-    }
-
-    if (item.type === "album" || item.type === "song") {
-      const album = item.album ?? null;
-      const albumId = item.albumId ?? album?.id ?? null;
-      openAlbumDetail({ album, albumId });
-      sidebarOpen = false;
-      return;
-    }
-  }
-
-  function handleContentAlbumSelect(event) {
-    const detail = event?.detail ?? {};
-    openAlbumDetail({
-      album: detail.album ?? null,
-      albumId: detail.albumId ?? null,
-    });
-    sidebarOpen = false;
-  }
-
-  function resetAlbumView() {
-    albumViewId = null;
-    albumViewData = null;
-    albumViewError = "";
-    albumViewLoading = false;
-  }
-
-  async function openAlbumDetail({ album = null, albumId = null } = {}) {
-    const derivedId = deriveAlbumIdCandidate(album ?? {}, albumId ?? null);
-    const normalizedId = derivedId ? String(derivedId) : null;
-    previousView = currentView !== "album" ? currentView : previousView;
-    currentView = "album";
-    sidebarOpen = false;
-
-    albumViewLoading = true;
-    albumViewError = "";
-    albumViewId = normalizedId;
-    if (album) {
-      albumViewData = mergeAlbumData(albumViewData, {
-        ...album,
-        artist: album.artist ?? selectedArtist?.name ?? "",
-      });
-    }
-
-    const requestOptions = token ? { token } : undefined;
-
-    if (!normalizedId && !albumViewData) {
-      albumViewError = "Album details are unavailable.";
-      albumViewLoading = false;
-      return;
-    }
-
-    try {
-      if (normalizedId) {
-        const fetched = await fetchAlbum(normalizedId, requestOptions);
-        albumViewData = mergeAlbumData(albumViewData, fetched);
-      }
-
-      if ((!albumViewData || !albumViewData.tracks?.length) && normalizedId) {
-        const sample = findSampleAlbum(normalizedId);
-        if (sample) {
-          albumViewData = mergeAlbumData(albumViewData, sample);
-        }
-      }
-
-      if (!albumViewData) {
-        albumViewError = "Album details are unavailable.";
-      }
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 404 && normalizedId) {
-        const sample = findSampleAlbum(normalizedId);
-        if (sample) {
-          albumViewData = mergeAlbumData(albumViewData, sample);
-          albumViewError = "";
-        } else {
-          albumViewError = "Album details are unavailable.";
-        }
-      } else {
-        albumViewError = err?.message || "Unable to load album details.";
-      }
-    } finally {
-      albumViewLoading = false;
-    }
-  }
-
-  function handleArtistAlbumSelect(event) {
-    const detail = event?.detail ?? {};
-    openAlbumDetail({
-      album: detail.album ?? null,
-      albumId: detail.albumId ?? null,
-    });
-  }
-
-  function handleAlbumBack() {
-    const fallback =
-      previousView && previousView !== "album" ? previousView : token ? "artists" : "news";
-    currentView = fallback;
+  function handleLogout(showMessage = true) {
+    authLogout();
+    resetContent();
+    resetAlbumCollections();
+    resetPlaylists();
     resetAlbumView();
-  }
+    navigate("profile");
+    artists.set([]);
+    artistsError.set("");
+    artistsLoading.set(false);
+    artistsInitialized.set(false);
+    selectedArtist.set(null);
+    closeSidebar();
 
-  async function loadArtists({ silent = false, force = false } = {}) {
-    if (artistsLoading) {
-      return;
-    }
-    if (!force && artistsInitialized) {
-      return;
-    }
-    if (!silent) {
-      clearMessage();
-    }
-    artistsError = "";
-    artistsLoading = true;
-    try {
-      const albums = await fetchAlbums({ token });
-      const source = Array.isArray(albums) && albums.length ? albums : sampleAlbums;
-      artists = buildArtistDirectory(source);
-      if (selectedArtist) {
-        const updated = artists.find((item) => item.slug === selectedArtist.slug);
-        selectedArtist = updated || null;
-      }
-      artistsInitialized = true;
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 404) {
-        artists = buildArtistDirectory(sampleAlbums);
-        if (selectedArtist) {
-          const updated = artists.find((item) => item.slug === selectedArtist.slug);
-          selectedArtist = updated || null;
-        }
-        artistsInitialized = true;
-      } else {
-        artistsError = err?.message || "Unable to load artists.";
-        if (!silent) {
-          setMessage(artistsError, "error");
-        }
-        artistsInitialized = false;
-      }
-    } finally {
-      artistsLoading = false;
-    }
-  }
-
-  async function loadPlaylists({ silent = false } = {}) {
-    if (!token || !activeUser) {
-      playlists = [];
-      return;
-    }
-    playlistsLoading = true;
-    playlistsError = "";
-    try {
-      const data = await fetchPlaylists();
-      playlists = Array.isArray(data) ? data : [];
-      if (selectedPlaylistId) {
-        const exists = playlists.some((item) => `${item.id}` === `${selectedPlaylistId}`);
-        if (!exists) {
-          selectedPlaylistId = null;
-        }
-      }
-    } catch (err) {
-      playlistsError = err?.message || "Unable to load playlists.";
-      if (!silent) {
-        setMessage(playlistsError, "error");
-      }
-    } finally {
-      playlistsLoading = false;
-    }
-  }
-
-  async function loadContent({ silent } = { silent: false }) {
-    if (!token) {
-      content = [];
-      contentDraft = "";
-      resetAlbumCollections();
-      return;
-    }
-
-    if (!silent) {
-      clearMessage();
-    }
-
-    await execute(async () => {
-      const data = await fetchContent(token);
-      content = Array.isArray(data) ? data : [];
-      contentDraft = content.join("\n");
-    }, "Unable to load content.");
-  }
-
-  async function loadUserAlbums({ silent } = { silent: false }) {
-    if (!token) {
-      resetAlbumCollections();
-      return;
-    }
-
-    if (!silent) {
-      clearMessage();
-    }
-
-    try {
-      const data = await fetchUserAlbums(token);
-      if (Array.isArray(data)) {
-        applyAlbumInteractions(data);
-      } else if (data && typeof data === "object") {
-        applyAlbumInteractions(Object.values(data));
-      } else {
-        resetAlbumCollections();
-      }
-    } catch (err) {
-      if (!silent) {
-        setMessage(err?.message || "Unable to load your albums.", "error");
-      }
+    if (showMessage) {
+      setMessage("You have been signed out.", "info");
     }
   }
 
@@ -700,7 +451,7 @@
       if (!tokenValue) {
         throw new Error("Login response missing token.");
       }
-      applySession(tokenValue, username);
+      authLogin(tokenValue, username);
       authPanel?.resetLogin?.();
     }, "Unable to log in.");
 
@@ -710,27 +461,27 @@
       await loadPlaylists({ silent: true });
       await loadArtists({ silent: true, force: true });
       setMessage(`Welcome back, ${username}!`, "success");
-      currentView = "news";
+      navigate("news");
     }
   }
 
   async function handleSaveContent(event) {
-    if (!token) {
+    if (!$token) {
       setMessage("You need to be logged in to save.", "error");
       return;
     }
 
     clearMessage();
-    const draftValue = event.detail?.draft ?? contentDraft;
+    const draftValue = event.detail?.draft ?? $contentDraft;
     const entries = normalizeContent(draftValue);
 
     const succeeded = await execute(async () => {
-      await updateContent(token, entries);
+      await updateContent($token, entries);
     }, "Unable to save content.");
 
     if (succeeded) {
-      content = entries;
-      contentDraft = entries.join("\n");
+      content.set(entries);
+      contentDraft.set(entries.join("\n"));
       setMessage("Content updated.", "success");
     }
   }
@@ -739,68 +490,218 @@
     await loadContent({ silent: false });
   }
 
-  function ensureAlbumEntry(albumId, album) {
-    const existing = albumInteractions[albumId] || {};
-    const mergedAlbum = album || existing.album || null;
-    const derivedTitle = album?.title || mergedAlbum?.title || existing.title || null;
-    const derivedArtist = album?.artist || mergedAlbum?.artist || existing.artist || null;
-    return {
-      ...existing,
-      albumId,
-      album: mergedAlbum,
-      title: derivedTitle,
-      artist: derivedArtist,
-    };
-  }
-
-  function updateAlbumEntry(albumId, updates, album) {
-    if (!albumId) {
+  async function loadContent({ silent } = { silent: false }) {
+    if (!$token) {
+      resetContent();
       return;
     }
-    const base = ensureAlbumEntry(albumId, album);
-    const normalizedUpdates = { ...updates };
-    if ("favorite" in normalizedUpdates && !("favorited" in normalizedUpdates)) {
-      normalizedUpdates.favorited = Boolean(normalizedUpdates.favorite);
-    }
-    if ("favorited" in normalizedUpdates && !("favorite" in normalizedUpdates)) {
-      normalizedUpdates.favorite = Boolean(normalizedUpdates.favorited);
-    }
-    const next = {
-      ...base,
-      ...normalizedUpdates,
-    };
 
-    const hasFavorite = Boolean(next.favorite);
-    const hasRating = Number.isFinite(next.rating);
-
-    if (!hasFavorite && !hasRating) {
-      const { [albumId]: removed, ...rest } = albumInteractions;
-      albumInteractions = rest;
-    } else {
-      albumInteractions = {
-        ...albumInteractions,
-        [albumId]: next,
-      };
+    if (!silent) {
+      clearMessage();
     }
-    syncAlbumCollections();
+
+    await execute(async () => {
+      const data = await fetchContent($token);
+      const entries = Array.isArray(data) ? data : [];
+      content.set(entries);
+      contentDraft.set(entries.join("\n"));
+    }, "Unable to load content.");
+  }
+
+  async function loadUserAlbums({ silent } = { silent: false }) {
+    if (!$token) {
+      resetAlbumCollections();
+      return;
+    }
+
+    if (!silent) {
+      clearMessage();
+    }
+
+    try {
+      const data = await fetchUserAlbums($token);
+      if (Array.isArray(data)) {
+        applyAlbumInteractions(data);
+      } else if (data && typeof data === "object") {
+        applyAlbumInteractions(Object.values(data));
+      } else {
+        resetAlbumCollections();
+      }
+    } catch (err) {
+      if (!silent) {
+        setMessage(err?.message || "Unable to load your albums.", "error");
+      }
+    }
+  }
+
+  async function loadArtists({ silent = false, force = false } = {}) {
+    if ($artistsLoading) {
+      return;
+    }
+    if (!force && $artistsInitialized) {
+      return;
+    }
+    if (!silent) {
+      clearMessage();
+    }
+    artistsError.set("");
+    artistsLoading.set(true);
+    try {
+      const albums = await fetchAlbums({ token: $token });
+      const source = Array.isArray(albums) ? albums : [];
+      const artistsList = buildArtistDirectory(source);
+      artists.set(artistsList);
+
+      if ($selectedArtist) {
+        const updated = artistsList.find((item) => item.slug === $selectedArtist.slug);
+        selectedArtist.set(updated || null);
+      }
+      artistsInitialized.set(true);
+    } catch (err) {
+      const errorMsg = err?.message || "Unable to load artists.";
+      artistsError.set(errorMsg);
+      if (!silent) {
+        setMessage(errorMsg, "error");
+      }
+      artistsInitialized.set(false);
+    } finally {
+      artistsLoading.set(false);
+    }
+  }
+
+  async function loadPlaylists({ silent = false } = {}) {
+    if (!$token || !$activeUser) {
+      playlists.set([]);
+      return;
+    }
+    playlists.set([]);
+    try {
+      const data = await fetchPlaylists($token);
+      // Backend returns {playlists: [...]}
+      const playlistArray = data?.playlists || data;
+      playlists.set(Array.isArray(playlistArray) ? playlistArray : []);
+
+      if ($selectedPlaylistId) {
+        const exists = $playlists.some((item) => `${item.id}` === `${$selectedPlaylistId}`);
+        if (!exists) {
+          selectedPlaylistId.set(null);
+        }
+      }
+    } catch (err) {
+      if (!silent) {
+        setMessage(err?.message || "Unable to load playlists.", "error");
+      }
+    }
+  }
+
+  function handleSearchSelection(event) {
+    const item = event?.detail?.item;
+    if (!item) {
+      return;
+    }
+
+    if (item.type === "album" || item.type === "song") {
+      const album = item.album ?? null;
+      const albumId = item.albumId ?? album?.id ?? null;
+      openAlbumDetail({ album, albumId });
+      closeSidebar();
+      return;
+    }
+  }
+
+  function handleContentAlbumSelect(event) {
+    const detail = event?.detail ?? {};
+    openAlbumDetail({
+      album: detail.album ?? null,
+      albumId: detail.albumId ?? null,
+    });
+    closeSidebar();
+  }
+
+  function handleArtistAlbumSelect(event) {
+    const detail = event?.detail ?? {};
+    openAlbumDetail({
+      album: detail.album ?? null,
+      albumId: detail.albumId ?? null,
+    });
+  }
+
+  async function openAlbumDetail({ album = null, albumId = null } = {}) {
+    const derivedId = deriveAlbumIdCandidate(album ?? {}, albumId ?? null);
+    const normalizedId = derivedId ? String(derivedId) : null;
+
+    if (!normalizedId) {
+      albumViewError.set("Album details are unavailable.");
+      return;
+    }
+
+    // Navigate to album route using page.js
+    page(buildRoute.album(normalizedId));
+
+    // Pre-load album data if available
+    if (album) {
+      albumViewData.set({
+        ...album,
+        artist: album.artist ?? $selectedArtist?.name ?? "",
+      });
+    }
+  }
+
+  function handleAlbumBack() {
+    const fallback =
+      $previousView && $previousView !== "album" ? $previousView : $token ? "artists" : "news";
+    navigate(fallback);
+    resetAlbumView();
+  }
+
+  function resolveEffectiveAlbumIdentifier(detail, fallback = null) {
+    if (!detail) {
+      return fallback ?? null;
+    }
+    const candidates = [
+      detail.album?.id,
+      detail.album?.albumId,
+      detail.albumId,
+      fallback,
+    ];
+    for (const candidate of candidates) {
+      if (candidate !== null && candidate !== undefined) {
+        return candidate;
+      }
+    }
+    const slugCandidate =
+      detail.album?.slug ?? detail.slug ?? (detail.album?.artist && detail.album?.title
+        ? `${detail.album.artist}-${detail.album.title}`
+        : null);
+    return slugCandidate ?? fallback ?? null;
   }
 
   async function handleAlbumFavorite(event) {
-    if (!token) {
+    if (!$token) {
       setMessage("You need to be logged in to favorite albums.", "error");
       return;
     }
     const detail = event.detail || {};
-    const albumId = detail.albumId;
-    if (!albumId) {
+    const resolvedIdentifier = resolveEffectiveAlbumIdentifier(detail, detail.albumId);
+    if (resolvedIdentifier === null || resolvedIdentifier === undefined) {
       return;
     }
+
+    const numericCandidate = Number(resolvedIdentifier);
+    const apiAlbumId = Number.isFinite(numericCandidate) ? numericCandidate : resolvedIdentifier;
     const favorite = Boolean(detail.favorite);
-    const previousEntry = albumInteractions[albumId];
-    const ratingValue = Number(previousEntry?.rating);
-    const currentRating = Number.isFinite(ratingValue) ? ratingValue : null;
+
+    // Get current rating from interactions
+    const interactions = get(albumInteractions);
+    const key = String(resolvedIdentifier);
+    const entry = interactions[key];
+    const currentRating = entry?.rating !== undefined && entry?.rating !== null
+      ? Number(entry.rating)
+      : null;
+
+    // Optimistic update
     updateAlbumEntry(
-      albumId,
+      resolvedIdentifier,
       {
         favorite,
         favorited: favorite,
@@ -808,10 +709,16 @@
       },
       detail.album
     );
+
     try {
-      const result = await favoriteAlbum({ token, albumId, favorite, rating: currentRating });
+      const result = await favoriteAlbum({
+        token: $token,
+        albumId: apiAlbumId,
+        favorite,
+        rating: currentRating,
+      });
       updateAlbumEntry(
-        albumId,
+        resolvedIdentifier,
         {
           favorite: Boolean(result?.favorited ?? favorite),
           favorited: Boolean(result?.favorited ?? favorite),
@@ -820,17 +727,9 @@
         detail.album
       );
     } catch (err) {
-      updateAlbumEntry(
-        albumId,
-        {
-          favorite: Boolean(previousEntry?.favorite ?? false),
-          favorited: Boolean(previousEntry?.favorited ?? previousEntry?.favorite ?? false),
-          rating: currentRating,
-        },
-        detail.album
-      );
+      // Rollback on error
       if (err instanceof ApiError && err.status === 401) {
-        logout(false);
+        handleLogout(false);
         setMessage("Session expired. Please log in again.", "error");
       } else {
         setMessage(err?.message || "Unable to update favorite.", "error");
@@ -839,21 +738,31 @@
   }
 
   async function handleAlbumRate(event) {
-    if (!token) {
+    if (!$token) {
       setMessage("You need to be logged in to rate albums.", "error");
       return;
     }
     const detail = event.detail || {};
-    const albumId = detail.albumId;
-    if (!albumId) {
+    const resolvedIdentifier = resolveEffectiveAlbumIdentifier(detail, detail.albumId);
+    if (resolvedIdentifier === null || resolvedIdentifier === undefined) {
       return;
     }
+
     const rating = detail.rating;
-    const previousEntry = albumInteractions[albumId];
     const desired = rating === null || rating === undefined ? null : rating;
-    const currentFavorite = Boolean(previousEntry?.favorite ?? false);
+
+    // Get current favorite status
+    const interactions = get(albumInteractions);
+    const key = String(resolvedIdentifier);
+    const entry = interactions[key];
+    const currentFavorite = entry ? Boolean(entry.favorite) : false;
+
+    const numericCandidate = Number(resolvedIdentifier);
+    const apiAlbumId = Number.isFinite(numericCandidate) ? numericCandidate : resolvedIdentifier;
+
+    // Optimistic update
     updateAlbumEntry(
-      albumId,
+      resolvedIdentifier,
       {
         favorite: currentFavorite,
         favorited: currentFavorite,
@@ -863,13 +772,18 @@
     );
 
     try {
-      const result = await rateAlbum({ token, albumId, rating: desired, favorite: currentFavorite });
+      const result = await rateAlbum({
+        token: $token,
+        albumId: apiAlbumId,
+        rating: desired,
+        favorite: currentFavorite,
+      });
       const resolved =
         result?.rating === null || result?.rating === undefined
           ? null
           : Number(result.rating);
       updateAlbumEntry(
-        albumId,
+        resolvedIdentifier,
         {
           favorite: currentFavorite,
           favorited: currentFavorite,
@@ -878,17 +792,9 @@
         detail.album
       );
     } catch (err) {
-      updateAlbumEntry(
-        albumId,
-        {
-          favorite: currentFavorite,
-          favorited: currentFavorite,
-          rating: previousEntry?.rating ?? null,
-        },
-        detail.album
-      );
+      // Rollback handled by updateAlbumEntry
       if (err instanceof ApiError && err.status === 401) {
-        logout(false);
+        handleLogout(false);
         setMessage("Session expired. Please log in again.", "error");
       } else {
         setMessage(err?.message || "Unable to update rating.", "error");
@@ -897,114 +803,61 @@
   }
 </script>
 
-<main class:has-sidebar={Boolean(token)}>
+<main class:has-sidebar={$isAuthenticated}>
   <Sidebar
-    {token}
-    {currentView}
+    token={$token}
+    currentView={$currentView}
     playlists={playlistSummaries}
-    open={sidebarOpen}
-    username={activeUser}
+    open={$sidebarOpen}
+    username={$activeUser}
     on:navigate={handleNavigate}
     on:viewMore={handleViewMorePlaylists}
     on:close={handleSidebarClose}
   />
 
-  {#if token && sidebarOpen}
+  {#if $isAuthenticated && $sidebarOpen}
     <div class="sidebar-overlay" on:click={handleSidebarClose} />
   {/if}
 
   <div class="app-content">
     <Header
-      {token}
-      {activeUser}
-      {currentView}
-      on:logout={() => logout(true)}
+      token={$token}
+      activeUser={$activeUser}
+      currentView={$currentView}
+      on:logout={() => handleLogout(true)}
       on:navigate={handleNavigate}
       on:menutoggle={handleMenuToggle}
       on:searchselect={handleSearchSelection}
     />
 
-    <FlashMessage {message} kind={messageKind} />
+    <FlashMessage message={$message} kind={$messageKind} />
 
-    {#if currentView === "news"}
-      {#if token}
-        <NewsFeed
-          {content}
-          {favoriteAlbums}
-          {ratedAlbums}
-          {loading}
-        />
+    {#if $currentView === "news"}
+      {#if $isAuthenticated}
+        <NewsView />
       {/if}
-    {:else if currentView === "profile"}
-      {#if token}
-        <ContentPanel
-          {content}
-          bind:draft={contentDraft}
-          favoriteAlbums={favoriteAlbums}
-          ratedAlbums={ratedAlbums}
-          {loading}
-          on:save={handleSaveContent}
-          on:refresh={handleRefreshContent}
-          on:selectalbum={handleContentAlbumSelect}
-        />
-      {:else}
-        <AuthPanel
-          bind:this={authPanel}
-          {loading}
-          on:signup={handleSignup}
-          on:login={handleLogin}
-        />
-      {/if}
-    {:else if currentView === "album"}
-      <section class="album-page">
-        <button type="button" class="album-page__back" on:click={handleAlbumBack}>
-          &larr; Back
-        </button>
-        <AlbumDetail album={albumViewData ?? {}} loading={albumViewLoading} error={albumViewError} />
-      </section>
-    {:else if currentView === "artists"}
-      {#if selectedArtist}
-        <ArtistDetail
-          artist={selectedArtist}
-          on:back={() => {
-            selectedArtist = null;
-          }}
-          on:refresh={() => loadArtists({ force: true })}
-          on:selectalbum={handleArtistAlbumSelect}
-        />
-      {:else}
-        <ArtistList
-          {artists}
-          loading={artistsLoading}
-          error={artistsError}
-          on:retry={() => loadArtists({ force: true })}
-          on:select={(event) => {
-            const artist = event.detail;
-            if (!artist) {
-              return;
-            }
-            const match = artists.find((item) => item.slug === artist.slug) || artist;
-            selectedArtist = match;
-          }}
-        />
-      {/if}
-    {:else if currentView === "playlists-new"}
-      <section class="placeholder">
-        <h2>Create playlist</h2>
-        <p>Playlist creation tools are on the roadmap. Stay tuned!</p>
-      </section>
-    {:else if currentView === "playlists"}
-      <PlaylistList
-        playlists={userPlaylists}
-        loading={playlistsLoading}
-        error={playlistsError}
-        username={activeUser}
-        selectedId={selectedPlaylistId}
-        on:select={(event) => {
-          const id = event.detail?.id ?? null;
-          selectedPlaylistId = id;
-        }}
+    {:else if $currentView === "profile"}
+      <ProfileView
+        bind:authPanel
+        on:signup={handleSignup}
+        on:login={handleLogin}
+        on:save={handleSaveContent}
+        on:refresh={handleRefreshContent}
+        on:selectalbum={handleContentAlbumSelect}
       />
+    {:else if $currentView === "album"}
+      <AlbumView
+        on:rate={handleAlbumRate}
+        on:back={handleAlbumBack}
+      />
+    {:else if $currentView === "artists"}
+      <ArtistsView
+        on:refresh={() => loadArtists({ force: true })}
+        on:retry={() => loadArtists({ force: true })}
+        on:selectalbum={handleArtistAlbumSelect}
+      />
+    {:else if $currentView === "playlists"}
+      <PlaylistsView on:refresh={() => loadPlaylists({ silent: false })} />
     {/if}
   </div>
 </main>
@@ -1033,53 +886,6 @@
     display: flex;
     flex-direction: column;
     gap: 2rem;
-  }
-
-  .placeholder {
-    border-radius: 1.25rem;
-    padding: 2.5rem 2rem;
-    background: rgba(255, 255, 255, 0.72);
-    box-shadow: 0 18px 42px rgba(79, 70, 229, 0.18);
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .placeholder h2 {
-    margin: 0;
-    font-size: 1.75rem;
-  }
-
-  .placeholder p {
-    margin: 0;
-    font-size: 1rem;
-    color: rgba(55, 65, 81, 0.85);
-  }
-
-  .album-page {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-  }
-
-  .album-page__back {
-    align-self: flex-start;
-    border: none;
-    border-radius: 0.75rem;
-    padding: 0.5rem 1.2rem;
-    background: rgba(79, 70, 229, 0.15);
-    color: #312e81;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
-  }
-
-  .album-page__back:hover,
-  .album-page__back:focus-visible {
-    background: rgba(79, 70, 229, 0.25);
-    box-shadow: 0 12px 28px rgba(79, 70, 229, 0.25);
-    outline: none;
-    transform: translateY(-1px);
   }
 
   .sidebar-overlay {
