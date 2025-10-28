@@ -1,7 +1,7 @@
 <script>
   import { createEventDispatcher } from "svelte";
   import PlaylistEditor from "./PlaylistEditor.svelte";
-  import { fetchPlaylist } from "../api/playlists.js";
+  import { fetchPlaylist, removeSongFromPlaylist } from "../api/playlists.js";
 
   export let playlists = [];
   export let loading = false;
@@ -41,7 +41,8 @@
   }
 
   function totalDuration(songs = []) {
-    return songs.reduce((sum, song) => sum + (song?.lengthSeconds ?? 0), 0);
+    if (!songs || !Array.isArray(songs)) return 0;
+    return songs.reduce((sum, song) => sum + (song?.lengthSeconds ?? song?.length_seconds ?? 0), 0);
   }
 
   $: normalizedUsername = (username || "").trim().toLowerCase();
@@ -82,9 +83,14 @@
   async function openEditPlaylist(event, playlist) {
     event.stopPropagation(); // Prevent card selection
 
+    console.log('[PlaylistList] Opening playlist for editing:', playlist.id);
+
     try {
       // Fetch full playlist details including songs
       const fullPlaylist = await fetchPlaylist(playlist.id, token);
+
+      console.log('[PlaylistList] Fetched full playlist:', fullPlaylist);
+      console.log('[PlaylistList] Full playlist songs:', fullPlaylist.songs);
 
       // Normalize the data to ensure consistent field names
       editingPlaylist = {
@@ -104,6 +110,9 @@
         })) : [],
       };
 
+      console.log('[PlaylistList] Normalized editingPlaylist:', editingPlaylist);
+      console.log('[PlaylistList] Normalized editingPlaylist songs:', editingPlaylist.songs);
+
       showEditor = true;
     } catch (err) {
       console.error("Failed to load playlist for editing:", err);
@@ -115,9 +124,34 @@
     dispatch("playlistSaved", event.detail);
   }
 
+  function handleEditorDelete(event) {
+    dispatch("playlistDeleted", event.detail);
+  }
+
   function handleEditorClose() {
     showEditor = false;
     editingPlaylist = null;
+  }
+
+  async function handleDeleteSong(event, playlist, song) {
+    event.stopPropagation(); // Prevent playlist selection
+
+    if (!confirm(`Remove "${song.title}" from "${playlist.title}"?`)) {
+      return;
+    }
+
+    try {
+      const updatedPlaylist = await removeSongFromPlaylist(playlist.id, song.id, token);
+
+      // Dispatch the updated playlist data
+      dispatch("playlistSaved", {
+        message: `Removed "${song.title}" from playlist`,
+        playlist: updatedPlaylist,
+      });
+    } catch (err) {
+      console.error("Failed to remove song from playlist:", err);
+      alert(`Failed to remove song: ${err.message || 'Unknown error'}`);
+    }
   }
 </script>
 
@@ -206,6 +240,9 @@
                     <th scope="col">Album</th>
                     <th scope="col">Genre</th>
                     <th scope="col" class="numeric">Length</th>
+                    {#if normalizedUsername && playlist.owner && playlist.owner.trim().toLowerCase() === normalizedUsername}
+                      <th scope="col" class="actions-col">Actions</th>
+                    {/if}
                   </tr>
                 </thead>
                 <tbody>
@@ -215,7 +252,19 @@
                       <td data-label="Artist">{song.artist}</td>
                       <td data-label="Album">{song.album || "—"}</td>
                       <td data-label="Genre">{song.genre || "—"}</td>
-                      <td data-label="Length" class="numeric">{formatDuration(song.lengthSeconds)}</td>
+                      <td data-label="Length" class="numeric">{formatDuration(song.lengthSeconds ?? song.length_seconds)}</td>
+                      {#if normalizedUsername && playlist.owner && playlist.owner.trim().toLowerCase() === normalizedUsername}
+                        <td data-label="Actions" class="actions-col">
+                          <button
+                            class="btn-delete-song"
+                            on:click={(e) => handleDeleteSong(e, playlist, song)}
+                            aria-label="Remove song from playlist"
+                            title="Remove from playlist"
+                          >
+                            🗑️
+                          </button>
+                        </td>
+                      {/if}
                     </tr>
                   {/each}
                 </tbody>
@@ -238,6 +287,7 @@
   {token}
   {username}
   on:save={handleEditorSave}
+  on:delete={handleEditorDelete}
   on:close={handleEditorClose}
 />
 
@@ -518,5 +568,29 @@
     .numeric {
       text-align: left;
     }
+  }
+
+  .actions-col {
+    width: 80px;
+    text-align: center;
+  }
+
+  .btn-delete-song {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 1.2rem;
+    padding: 0.25rem 0.5rem;
+    transition: all 0.2s ease;
+    opacity: 0.6;
+  }
+
+  .btn-delete-song:hover {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+
+  .btn-delete-song:active {
+    transform: scale(1);
   }
 </style>

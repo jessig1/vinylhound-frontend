@@ -7,6 +7,7 @@
     albumViewId,
     albumInteractions,
     isAuthenticated,
+    token,
   } from "../stores";
   import { getAlbumInteractionById } from "../stores/albums";
   import AlbumDetail from "../components/AlbumDetail.svelte";
@@ -19,6 +20,10 @@
 
   function handleBack() {
     dispatch("back");
+  }
+
+  function handleAddToPlaylist(event) {
+    dispatch("addToPlaylist", event.detail);
   }
 
   // Derive album interaction
@@ -62,7 +67,9 @@
     albumId={$albumViewData?.id ?? $albumViewData?.albumId ?? $albumViewId ?? null}
     canInteract={$isAuthenticated}
     userRating={albumViewInteraction?.rating ?? null}
+    token={$token}
     on:rate={handleRate}
+    on:addToPlaylist={handleAddToPlaylist}
   />
 </section>
 

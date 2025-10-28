@@ -11,8 +11,11 @@ import { get, post, put, del, authHeaders } from "./client.js";
  * @returns {Promise<Array>} Array of playlists
  */
 export async function fetchPlaylists(token) {
+  console.log('[Playlists API] Fetching playlists...');
   const headers = token ? authHeaders(token) : {};
-  return get("/v1/playlists", { headers });
+  const result = await get("/v1/playlists", { headers });
+  console.log('[Playlists API] Fetched playlists:', result);
+  return result;
 }
 
 /**
@@ -22,8 +25,12 @@ export async function fetchPlaylists(token) {
  * @returns {Promise<Object>} Playlist data
  */
 export async function fetchPlaylist(id, token) {
+  console.log(`[Playlists API] Fetching playlist ${id}...`);
   const headers = token ? authHeaders(token) : {};
-  return get(`/v1/playlists/${encodeURIComponent(id)}`, { headers });
+  const result = await get(`/v1/playlists/${encodeURIComponent(id)}`, { headers });
+  console.log(`[Playlists API] Fetched playlist ${id}:`, result);
+  console.log(`[Playlists API] Playlist ${id} has ${result?.songs?.length || 0} songs`);
+  return result;
 }
 
 /**
@@ -63,8 +70,12 @@ export async function addSongToPlaylist(playlistId, songId, token) {
  * @returns {Promise<Object>} Updated playlist
  */
 export async function updatePlaylist(playlistId, playlistData, token) {
+  console.log(`[Playlists API] Updating playlist ${playlistId}...`, playlistData);
   const headers = authHeaders(token);
-  return put(`/v1/playlists/${encodeURIComponent(playlistId)}`, playlistData, { headers });
+  const result = await put(`/v1/playlists/${encodeURIComponent(playlistId)}`, playlistData, { headers });
+  console.log(`[Playlists API] Updated playlist ${playlistId}:`, result);
+  console.log(`[Playlists API] Updated playlist ${playlistId} has ${result?.songs?.length || 0} songs`);
+  return result;
 }
 
 /**

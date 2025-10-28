@@ -1,6 +1,6 @@
 <script>
   import { createEventDispatcher } from "svelte";
-  import { playlists, playlistsLoading, playlistsError, selectedPlaylistId, activeUser, token } from "../stores";
+  import { playlists, playlistsLoading, playlistsError, selectedPlaylistId, activeUser, token, updatePlaylist, removePlaylist } from "../stores";
   import PlaylistList from "../components/PlaylistList.svelte";
 
   const dispatch = createEventDispatcher();
@@ -23,9 +23,28 @@
   }
 
   function handlePlaylistSaved(event) {
-    // Refresh playlists after saving
-    // The parent App.svelte should handle reloading playlists
-    dispatch("refresh");
+    const { playlist } = event.detail || {};
+
+    // Update the specific playlist in the store with the returned data
+    if (playlist) {
+      updatePlaylist(playlist);
+    } else {
+      // Fallback: refresh all playlists if no specific playlist data was returned
+      dispatch("refresh");
+    }
+  }
+
+  function handlePlaylistDeleted(event) {
+    const { playlistId } = event.detail || {};
+
+    // Remove the playlist from the store
+    if (playlistId) {
+      removePlaylist(playlistId);
+      // Clear selection if the deleted playlist was selected
+      if ($selectedPlaylistId === playlistId) {
+        selectedPlaylistId.set(null);
+      }
+    }
   }
 </script>
 
@@ -38,4 +57,5 @@
   token={$token}
   on:select={handleSelect}
   on:playlistSaved={handlePlaylistSaved}
+  on:playlistDeleted={handlePlaylistDeleted}
 />

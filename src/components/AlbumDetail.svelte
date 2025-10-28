@@ -1,8 +1,9 @@
 <script>
-  import { createEventDispatcher } from "svelte";
+  import { createEventDispatcher, onMount } from "svelte";
   import RatingStars from "./RatingStars.svelte";
   import TrackItem from "./TrackItem.svelte";
   import AddToPlaylistModal from "./AddToPlaylistModal.svelte";
+  import { searchSongs } from "../api";
   import {
     coverAltTextForAlbum,
     discoverGenres,
@@ -31,12 +32,54 @@
   let currentRating = null;
   let showPlaylistModal = false;
   let selectedTrack = null;
+  let loadingSongs = false;
+  let songsList = [];
 
   const dispatch = createEventDispatcher();
 
   $: fallbackGenres = discoverGenres(album);
-  $: normalizedTracks = discoverTrackList(album);
   $: currentRating = normalizeAlbumRating(userRating);
+
+  // Load songs from database when album changes
+  $: if (albumId) {
+    loadSongsForAlbum(albumId);
+  }
+
+  // Use songs from database if available, otherwise fall back to album tracks
+  $: normalizedTracks = songsList.length > 0 ? songsList : discoverTrackList(album);
+
+  async function loadSongsForAlbum(id) {
+    if (!id) return;
+
+    loadingSongs = true;
+    try {
+      const songs = await searchSongs({ albumId: id, token });
+      songsList = songs.map((song, index) => ({
+        id: song.id,
+        title: song.title,
+        artist: song.artist,
+        album: song.album,
+        albumId: song.albumId,
+        duration: song.duration,
+        lengthSeconds: song.lengthSeconds,
+        trackNumber: song.trackNumber || index + 1,
+        lengthLabel: formatDuration(song.duration),
+      }));
+    } catch (err) {
+      console.error("Failed to load songs for album:", err);
+      // Fall back to album tracks if song loading fails
+      songsList = [];
+    } finally {
+      loadingSongs = false;
+    }
+  }
+
+  function formatDuration(seconds) {
+    if (!seconds) return '';
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${String(secs).padStart(2, '0')}`;
+  }
 
   const coverAltText = () => coverAltTextForAlbum(album);
 
@@ -144,6 +187,18 @@
     showPlaylistModal = false;
     selectedTrack = null;
   }
+
+  function handleAddAllToPlaylist() {
+    if (!canInteract || normalizedTracks.length === 0) return;
+    // Create a special track object representing all tracks
+    selectedTrack = {
+      id: null,
+      title: `All tracks from ${album?.title || 'this album'}`,
+      isAlbum: true,
+      allTracks: normalizedTracks,
+    };
+    showPlaylistModal = true;
+  }
 </script>
 
 <div class="album-detail">
@@ -211,7 +266,15 @@
     </section>
 
     <section class="album-detail__tracks" aria-label="Track list">
-      <h3>Track list</h3>
+      <div class="tracks-header">
+        <h3>Track list</h3>
+        {#if canInteract && normalizedTracks.length > 0}
+          <button class="btn-add-all" on:click={handleAddAllToPlaylist}>
+            <span class="icon">➕</span>
+            Add All to Playlist
+          </button>
+        {/if}
+      </div>
       {#if normalizedTracks.length}
         <ol>
           {#each normalizedTracks as track, index (track?.id ?? track?.title ?? track ?? `track-${index}`)}
@@ -437,6 +500,47 @@
   }
 
   /* Track item styles are now in TrackItem.svelte */
+
+  .tracks-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+
+  .tracks-header h3 {
+    margin: 0;
+  }
+
+  .btn-add-all {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    background: linear-gradient(135deg, #4f46e5, #6366f1);
+    color: white;
+    border: none;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(79, 70, 229, 0.25);
+  }
+
+  .btn-add-all:hover {
+    background: linear-gradient(135deg, #4338ca, #4f46e5);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(79, 70, 229, 0.35);
+  }
+
+  .btn-add-all:active {
+    transform: translateY(0);
+  }
+
+  .btn-add-all .icon {
+    font-size: 1rem;
+  }
 
   .album-detail__empty {
     margin: 0;

@@ -1,7 +1,7 @@
 <script>
   import { createEventDispatcher } from "svelte";
   import { searchSongs } from "../api/songs.js";
-  import { createPlaylist, updatePlaylist } from "../api/playlists.js";
+  import { createPlaylist, updatePlaylist, deletePlaylist } from "../api/playlists.js";
 
   export let playlist = null; // If editing existing playlist
   export let isOpen = false;
@@ -39,17 +39,20 @@
       wasOpen = true;
       if (playlist && playlist.id) {
         // Load playlist data for editing
+        console.log("[PlaylistEditor] Modal opened with playlist:", playlist);
+        console.log("[PlaylistEditor] Playlist songs from prop:", playlist.songs);
         lastLoadedPlaylistId = playlist.id;
         title = playlist.title || "";
         isPublic = playlist.is_public || playlist.isPublic || false;
         tags = Array.isArray(playlist.tags) ? [...playlist.tags] : [];
         songs = Array.isArray(playlist.songs) ? [...playlist.songs] : [];
-        console.log("Loaded playlist for editing:", {
+        console.log("[PlaylistEditor] Loaded playlist for editing:", {
           id: playlist.id,
           title,
           isPublic,
           tags,
-          songsCount: songs.length
+          songsCount: songs.length,
+          songsList: songs
         });
       } else {
         // Creating new playlist
@@ -58,24 +61,27 @@
         isPublic = false;
         tags = [];
         songs = [];
-        console.log("Reset form for new playlist");
+        console.log("[PlaylistEditor] Reset form for new playlist");
       }
     } else if (!isOpen && wasOpen) {
       // Modal just closed
       wasOpen = false;
     } else if (isOpen && playlist && playlist.id !== lastLoadedPlaylistId) {
       // Different playlist loaded while modal is open
+      console.log("[PlaylistEditor] Different playlist loaded:", playlist);
+      console.log("[PlaylistEditor] Different playlist songs:", playlist.songs);
       lastLoadedPlaylistId = playlist.id;
       title = playlist.title || "";
       isPublic = playlist.is_public || playlist.isPublic || false;
       tags = Array.isArray(playlist.tags) ? [...playlist.tags] : [];
       songs = Array.isArray(playlist.songs) ? [...playlist.songs] : [];
-      console.log("Loaded different playlist for editing:", {
+      console.log("[PlaylistEditor] Loaded different playlist for editing:", {
         id: playlist.id,
         title,
         isPublic,
         tags,
-        songsCount: songs.length
+        songsCount: songs.length,
+        songsList: songs
       });
     }
   }
@@ -115,10 +121,13 @@
   function addSong(song) {
     // Check if song already in playlist
     if (songs.some(s => s.id === song.id)) {
+      console.log("[PlaylistEditor] Song already in playlist:", song);
       return;
     }
 
+    console.log("[PlaylistEditor] Adding song to playlist:", song);
     songs = [...songs, song];
+    console.log("[PlaylistEditor] Updated songs array:", songs);
     searchQuery = "";
     searchResults = [];
   }
@@ -173,9 +182,10 @@
 
       const playlistData = {
         title: title.trim(),
+        description: "", // Optional description field
         owner: username || "", // Username of the current user
         tags: tags,
-        is_public: isPublic,
+        isPublic: isPublic, // Use camelCase to match backend expectation
         songs: playlistSongs,
       };
 
@@ -194,6 +204,28 @@
     } catch (err) {
       error = err.message || "Failed to save playlist";
       console.error("Save error:", err);
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function handleDelete() {
+    if (!isEditing || !playlist?.id) return;
+
+    if (!confirm(`Are you sure you want to delete "${playlist.title}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    saving = true;
+    error = null;
+
+    try {
+      await deletePlaylist(playlist.id, token);
+      dispatch("delete", { playlistId: playlist.id });
+      close();
+    } catch (err) {
+      error = err.message || "Failed to delete playlist";
+      console.error("Delete error:", err);
     } finally {
       saving = false;
     }
@@ -393,12 +425,19 @@
 
           <!-- Action Buttons -->
           <div class="button-group">
-            <button type="submit" class="btn btn-primary" disabled={!canSave || saving}>
-              {saving ? "Saving..." : isEditing ? "Update Playlist" : "Create Playlist"}
-            </button>
-            <button type="button" class="btn btn-secondary" on:click={close}>
-              Cancel
-            </button>
+            <div class="button-group-left">
+              <button type="submit" class="btn btn-primary" disabled={!canSave || saving}>
+                {saving ? "Saving..." : isEditing ? "Update Playlist" : "Create Playlist"}
+              </button>
+              <button type="button" class="btn btn-secondary" on:click={close}>
+                Cancel
+              </button>
+            </div>
+            {#if isEditing}
+              <button type="button" class="btn btn-danger" on:click={handleDelete} disabled={saving}>
+                {saving ? "Deleting..." : "Delete Playlist"}
+              </button>
+            {/if}
           </div>
         </form>
       </div>
@@ -797,10 +836,18 @@
 
   .button-group {
     display: flex;
+    justify-content: space-between;
+    align-items: center;
     gap: 0.75rem;
     margin-top: 1.5rem;
     padding-top: 1.5rem;
     border-top: 1px solid #e0e0e0;
+  }
+
+  .button-group-left {
+    display: flex;
+    gap: 0.75rem;
+    flex: 1;
   }
 
   .btn {
@@ -837,6 +884,16 @@
     background-color: #545b62;
   }
 
+  .btn-danger {
+    background-color: #dc3545;
+    color: white;
+    flex: 0 0 auto;
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    background-color: #c82333;
+  }
+
   @media (max-width: 600px) {
     .modal-content {
       max-height: 95vh;
@@ -844,6 +901,10 @@
 
     .button-group {
       flex-direction: column;
+    }
+
+    .button-group-left {
+      width: 100%;
     }
 
     .btn {

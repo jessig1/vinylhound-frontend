@@ -85,6 +85,11 @@ export async function request(endpoint, options = {}) {
     ...options.headers,
   };
 
+  console.log(`[API] ${options.method || 'GET'} ${url}`, {
+    headers: Object.keys(headers),
+    body: options.body ? JSON.parse(options.body) : undefined
+  });
+
   const response = await fetch(url, {
     ...options,
     headers,
@@ -105,15 +110,24 @@ export async function request(endpoint, options = {}) {
       // Response wasn't JSON, use status text
     }
 
+    console.error(`[API Error] ${options.method || 'GET'} ${url}`, {
+      status: response.status,
+      message: errorMessage,
+      data: errorData
+    });
+
     throw new ApiError(errorMessage, response.status, errorData);
   }
 
   // Handle 204 No Content
   if (response.status === 204) {
+    console.log(`[API] ${options.method || 'GET'} ${url} - 204 No Content`);
     return null;
   }
 
-  return await response.json();
+  const data = await response.json();
+  console.log(`[API] ${options.method || 'GET'} ${url} - Response:`, data);
+  return data;
 }
 
 /**

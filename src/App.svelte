@@ -60,6 +60,7 @@
     playlists,
     selectedPlaylistId,
     resetPlaylists,
+    updatePlaylist,
   } from "./stores/playlists";
 
   // Import API functions
@@ -374,8 +375,8 @@
     // Navigate using page.js
     page(route);
 
-    // Load playlists if needed
-    if (nextView === "playlists" && (!userPlaylists.length || !$playlists.length)) {
+    // Load playlists when navigating to playlists view
+    if (nextView === "playlists") {
       loadPlaylists({ silent: true });
     }
   }
@@ -574,7 +575,6 @@
       playlists.set([]);
       return;
     }
-    playlists.set([]);
     try {
       const data = await fetchPlaylists($token);
       // Backend returns {playlists: [...]}
@@ -801,6 +801,20 @@
       }
     }
   }
+
+  async function handleAlbumAddToPlaylist(event) {
+    const { message, playlist } = event.detail || {};
+    if (message) {
+      setMessage(message, "success");
+    }
+    // Update the specific playlist in the store with the returned data
+    if (playlist) {
+      updatePlaylist(playlist);
+    } else {
+      // Fallback: refresh all playlists if no specific playlist data was returned
+      await loadPlaylists({ silent: true });
+    }
+  }
 </script>
 
 <main class:has-sidebar={$isAuthenticated}>
@@ -849,6 +863,7 @@
       <AlbumView
         on:rate={handleAlbumRate}
         on:back={handleAlbumBack}
+        on:addToPlaylist={handleAlbumAddToPlaylist}
       />
     {:else if $currentView === "artists"}
       <ArtistsView

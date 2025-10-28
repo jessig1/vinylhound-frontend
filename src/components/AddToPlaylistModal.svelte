@@ -55,15 +55,32 @@
         token
       );
 
-      // Add the song to the newly created playlist
-      if (track?.id && newPlaylist?.id) {
-        await addSongToPlaylist(newPlaylist.id, track.id, token);
+      let updatedPlaylist = newPlaylist;
+
+      // Add songs to the newly created playlist and get updated data
+      if (newPlaylist?.id) {
+        if (track?.isAlbum && track?.allTracks) {
+          // Adding all tracks from album
+          for (const t of track.allTracks) {
+            if (t.id) {
+              updatedPlaylist = await addSongToPlaylist(newPlaylist.id, t.id, token);
+            }
+          }
+        } else if (track?.id) {
+          // Adding single track
+          updatedPlaylist = await addSongToPlaylist(newPlaylist.id, track.id, token);
+        }
       }
 
+      const trackCount = track?.isAlbum ? track.allTracks?.length || 0 : 1;
+      const message = track?.isAlbum
+        ? `Added ${trackCount} tracks to new playlist "${newPlaylist.title}"`
+        : `Added "${track?.title}" to new playlist "${newPlaylist.title}"`;
+
       dispatch("success", {
-        playlist: newPlaylist,
+        playlist: updatedPlaylist,
         track,
-        message: `Added "${track?.title}" to new playlist "${newPlaylist.title}"`,
+        message,
       });
 
       close();
@@ -85,15 +102,32 @@
     error = null;
 
     try {
-      await addSongToPlaylist(selectedPlaylistId, track.id, token);
-
       const selectedPlaylist = playlists.find((p) => p.id === selectedPlaylistId);
+      let updatedPlaylist = null;
+
+      // Add songs to the playlist and get the updated playlist data
+      if (track?.isAlbum && track?.allTracks) {
+        // Adding all tracks from album
+        for (const t of track.allTracks) {
+          if (t.id) {
+            updatedPlaylist = await addSongToPlaylist(selectedPlaylistId, t.id, token);
+          }
+        }
+      } else if (track?.id) {
+        // Adding single track
+        updatedPlaylist = await addSongToPlaylist(selectedPlaylistId, track.id, token);
+      }
+
+      const trackCount = track?.isAlbum ? track.allTracks?.length || 0 : 1;
+      const message = track?.isAlbum
+        ? `Added ${trackCount} tracks to "${selectedPlaylist?.title}"`
+        : `Added "${track?.title}" to "${selectedPlaylist?.title}"`;
 
       dispatch("success", {
         playlistId: selectedPlaylistId,
-        playlist: selectedPlaylist,
+        playlist: updatedPlaylist || selectedPlaylist,
         track,
-        message: `Added "${track?.title}" to "${selectedPlaylist?.title}"`,
+        message,
       });
 
       close();
