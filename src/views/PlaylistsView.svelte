@@ -46,6 +46,16 @@
       }
     }
   }
+
+  function handleSelectArtist(event) {
+    const artist = event.detail;
+    dispatch("selectartist", artist);
+  }
+
+  function handleSelectAlbum(event) {
+    const album = event.detail;
+    dispatch("selectalbum", album);
+  }
 </script>
 
 <PlaylistList
@@ -58,4 +68,6 @@
   on:select={handleSelect}
   on:playlistSaved={handlePlaylistSaved}
   on:playlistDeleted={handlePlaylistDeleted}
+  on:selectartist={handleSelectArtist}
+  on:selectalbum={handleSelectAlbum}
 />

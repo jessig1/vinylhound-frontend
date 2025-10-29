@@ -77,6 +77,8 @@
     rateAlbum,
     ApiError,
   } from "./api";
+  import { getArtistDetails, getAlbumDetails, importAlbum } from "./api/search.js";
+  import { searchSongs } from "./api/songs.js";
   import { normalizeContent } from "./lib/content";
 
   // Import router utilities
@@ -618,12 +620,219 @@
     closeSidebar();
   }
 
-  function handleArtistAlbumSelect(event) {
+  async function handleArtistAlbumSelect(event) {
     const detail = event?.detail ?? {};
-    openAlbumDetail({
-      album: detail.album ?? null,
-      albumId: detail.albumId ?? null,
-    });
+    const album = detail.album ?? null;
+    const albumId = detail.albumId ?? null;
+
+    // Check if this is a Spotify album (has external_id or id is non-numeric)
+    const externalId = album?.external_id || album?.id;
+    const isSpotifyAlbum = externalId && (typeof externalId === 'string' && /[^0-9]/.test(externalId));
+
+    console.log('handleArtistAlbumSelect:', { album, albumId, externalId, isSpotifyAlbum });
+
+    if (isSpotifyAlbum) {
+      // Fetch complete album data with tracks for Spotify albums
+      console.log('Fetching complete album data for Spotify album:', externalId);
+      try {
+        const data = await getAlbumDetails(externalId);
+        console.log('Received album data:', data);
+
+        // Import the album to database so tracks get database IDs for playlist support
+        console.log('Importing album to database:', externalId);
+        let dbTracks = [];
+        try {
+          await importAlbum(externalId);
+          console.log('Album imported successfully');
+
+          // Query songs from database to get database IDs
+          try {
+            const albumTitle = data.album.title || album.title;
+            const artistName = data.album.artist || album.artist;
+            dbTracks = await searchSongs({ album: albumTitle, artist: artistName, token: $token });
+            console.log(`Found ${dbTracks.length} tracks in database for ${albumTitle}`);
+          } catch (queryErr) {
+            console.warn('Failed to query database tracks:', queryErr);
+          }
+        } catch (importErr) {
+          console.warn('Failed to import album (non-fatal):', importErr);
+          // Continue even if import fails - user can still view the album
+        }
+
+        // Transform the data to match the expected format
+        const enrichedAlbum = {
+          ...album,
+          ...data.album,
+          id: externalId,
+          external_id: externalId,
+          cover: data.album.cover_url || album.cover,
+          releaseYear: data.album.release_year || album.releaseYear,
+          tracks: (data.tracks || []).map((track, index) => {
+            // Try to match with database track by title
+            const dbTrack = dbTracks.find(dt =>
+              dt.title?.toLowerCase() === track.title?.toLowerCase() ||
+              dt.external_id === track.external_id
+            );
+
+            return {
+              ...track,
+              // Add database ID if found
+              id: dbTrack?.id || track.id,
+              trackNumber: track.track_number || index + 1,
+              lengthSeconds: track.duration || 0,
+              duration: track.duration || 0
+            };
+          })
+        };
+
+        openAlbumDetail({
+          album: enrichedAlbum,
+          albumId: externalId,
+        });
+      } catch (err) {
+        console.error("Failed to fetch album details:", err);
+        setMessage("Could not load complete album data", "error");
+        // Fall back to basic album data
+        openAlbumDetail({
+          album: album,
+          albumId: albumId,
+        });
+      }
+    } else {
+      // For database albums, just open directly
+      openAlbumDetail({
+        album: album,
+        albumId: albumId,
+      });
+    }
+  }
+
+  async function handleSpotifyArtistSelect(event) {
+    const artist = event?.detail ?? {};
+
+    // Get the external ID (Spotify ID)
+    const artistId = artist.external_id || artist.id || artist.spotify_id;
+
+    if (!artistId) {
+      console.error("No artist ID found", artist);
+      setMessage("Could not load artist details", "error");
+      return;
+    }
+
+    try {
+      // Fetch complete artist data with all albums from Spotify
+      const data = await getArtistDetails(artistId);
+
+      // Transform the data to match the expected format
+      const enrichedArtist = {
+        ...artist,
+        ...data.artist,
+        // Map backend field names to frontend expectations
+        image: data.artist.image_url || artist.image,
+        albums: (data.albums || []).map(album => ({
+          ...album,
+          cover: album.cover_url,
+          releaseYear: album.release_year,
+          id: album.external_id
+        })),
+        counts: {
+          albums: (data.albums || []).length,
+          songs: 0  // We don't have song count at artist level
+        }
+      };
+
+      // Set the enriched artist in the store
+      selectedArtist.set(enrichedArtist);
+      // Navigate to artists view
+      navigate("artists");
+    } catch (err) {
+      console.error("Failed to fetch artist details:", err);
+      setMessage("Could not load complete artist data", "error");
+      // Fall back to basic artist data
+      selectedArtist.set(artist);
+      navigate("artists");
+    }
+  }
+
+  async function handleSpotifyAlbumSelect(event) {
+    const album = event?.detail ?? {};
+
+    // Get the external ID (Spotify ID)
+    const albumId = album.external_id || album.id || album.spotify_id;
+
+    if (!albumId) {
+      console.error("No album ID found", album);
+      setMessage("Could not load album details", "error");
+      return;
+    }
+
+    try {
+      // Fetch complete album data with all tracks from Spotify
+      const data = await getAlbumDetails(albumId);
+
+      // Import the album to database so tracks get database IDs for playlist support
+      console.log('Importing album to database:', albumId);
+      let dbTracks = [];
+      try {
+        await importAlbum(albumId);
+        console.log('Album imported successfully');
+
+        // Query songs from database to get database IDs
+        try {
+          const albumTitle = data.album.title || album.title;
+          const artistName = data.album.artist || album.artist;
+          dbTracks = await searchSongs({ album: albumTitle, artist: artistName, token: $token });
+          console.log(`Found ${dbTracks.length} tracks in database for ${albumTitle}`);
+        } catch (queryErr) {
+          console.warn('Failed to query database tracks:', queryErr);
+        }
+      } catch (importErr) {
+        console.warn('Failed to import album (non-fatal):', importErr);
+        // Continue even if import fails - user can still view the album
+      }
+
+      // Transform the data to match the expected format for AlbumDetail component
+      const enrichedAlbum = {
+        ...album,
+        ...data.album,
+        // Map backend field names to frontend expectations
+        id: albumId,
+        external_id: albumId,
+        cover: data.album.cover_url || album.cover,
+        releaseYear: data.album.release_year || album.releaseYear,
+        tracks: (data.tracks || []).map((track, index) => {
+          // Try to match with database track by title
+          const dbTrack = dbTracks.find(dt =>
+            dt.title?.toLowerCase() === track.title?.toLowerCase() ||
+            dt.external_id === track.external_id
+          );
+
+          return {
+            ...track,
+            // Add database ID if found
+            id: dbTrack?.id || track.id,
+            // Map backend track fields to frontend expectations
+            trackNumber: track.track_number || index + 1,
+            lengthSeconds: track.duration || 0,
+            // Keep original fields too
+            duration: track.duration || 0
+          };
+        })
+      };
+
+      openAlbumDetail({
+        album: enrichedAlbum,
+        albumId: albumId,
+      });
+    } catch (err) {
+      console.error("Failed to fetch album details:", err);
+      setMessage("Could not load complete album data", "error");
+      // Fall back to basic album data
+      openAlbumDetail({
+        album: album,
+        albumId: albumId,
+      });
+    }
   }
 
   async function openAlbumDetail({ album = null, albumId = null } = {}) {
@@ -872,7 +1081,11 @@
         on:selectalbum={handleArtistAlbumSelect}
       />
     {:else if $currentView === "playlists"}
-      <PlaylistsView on:refresh={() => loadPlaylists({ silent: false })} />
+      <PlaylistsView
+        on:refresh={() => loadPlaylists({ silent: false })}
+        on:selectartist={handleSpotifyArtistSelect}
+        on:selectalbum={handleSpotifyAlbumSelect}
+      />
     {/if}
   </div>
 </main>

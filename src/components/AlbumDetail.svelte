@@ -40,8 +40,8 @@
   $: fallbackGenres = discoverGenres(album);
   $: currentRating = normalizeAlbumRating(userRating);
 
-  // Load songs from database when album changes
-  $: if (albumId) {
+  // Load songs from database when album changes, but only if album doesn't already have tracks
+  $: if (albumId && (!album.tracks || album.tracks.length === 0)) {
     loadSongsForAlbum(albumId);
   }
 
@@ -50,6 +50,12 @@
 
   async function loadSongsForAlbum(id) {
     if (!id) return;
+
+    // Skip if this looks like an external ID (Spotify, etc.) - contains non-numeric characters
+    if (typeof id === 'string' && /[^0-9]/.test(id)) {
+      console.log('Skipping song load for external album ID:', id);
+      return;
+    }
 
     loadingSongs = true;
     try {
