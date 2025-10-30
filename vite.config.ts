@@ -1,15 +1,16 @@
-import { svelte } from "@sveltejs/vite-plugin-svelte";
-import { defineConfig } from "vite";
+import { defineConfig } from 'vite';
+import { svelte } from '@sveltejs/vite-plugin-svelte';
 
 export default defineConfig({
   plugins: [svelte()],
   server: {
     port: 5173,
     proxy: {
-      "/api": {
-        target: "http://localhost:8080",
+      '/api': {
+        target: 'http://localhost:8080', // your Go API
         changeOrigin: true,
-        secure: false,
+        // keep the /api prefix so frontend can call fetch('/api/...')
+        rewrite: (p) => p, 
       },
     },
   },

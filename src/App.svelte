@@ -12,6 +12,7 @@
   import AlbumView from "./views/AlbumView.svelte";
   import ArtistsView from "./views/ArtistsView.svelte";
   import PlaylistsView from "./views/PlaylistsView.svelte";
+  import SearchView from "./views/SearchView.svelte";
   import PlaceholderView from "./views/PlaceholderView.svelte";
 
   // Import stores
@@ -82,7 +83,7 @@
   import { normalizeContent } from "./lib/content";
 
   // Import router utilities
-  import { buildRoute } from "./router";
+  import { buildRoute, navigateTo } from "./router";
 
   // Sample playlists for sidebar
   const samplePlaylists = [
@@ -557,7 +558,13 @@
 
       if ($selectedArtist) {
         const updated = artistsList.find((item) => item.slug === $selectedArtist.slug);
-        selectedArtist.set(updated || null);
+        if (updated) {
+          selectedArtist.set({
+            ...updated,
+            ...$selectedArtist,
+            slug: $selectedArtist.slug,
+          });
+        }
       }
       artistsInitialized.set(true);
     } catch (err) {
@@ -593,21 +600,6 @@
       if (!silent) {
         setMessage(err?.message || "Unable to load playlists.", "error");
       }
-    }
-  }
-
-  function handleSearchSelection(event) {
-    const item = event?.detail?.item;
-    if (!item) {
-      return;
-    }
-
-    if (item.type === "album" || item.type === "song") {
-      const album = item.album ?? null;
-      const albumId = item.albumId ?? album?.id ?? null;
-      openAlbumDetail({ album, albumId });
-      closeSidebar();
-      return;
     }
   }
 
@@ -710,7 +702,6 @@
   async function handleSpotifyArtistSelect(event) {
     const artist = event?.detail ?? {};
 
-    // Get the external ID (Spotify ID)
     const artistId = artist.external_id || artist.id || artist.spotify_id;
 
     if (!artistId) {
@@ -719,38 +710,58 @@
       return;
     }
 
-    try {
-      // Fetch complete artist data with all albums from Spotify
-      const data = await getArtistDetails(artistId);
+    const nameCandidate =
+      (typeof artist.name === "string" && artist.name) ||
+      (typeof artist.display_name === "string" && artist.display_name) ||
+      null;
 
-      // Transform the data to match the expected format
+    const fallbackIdentifier = typeof artistId === "string" ? artistId : String(artistId);
+    const inferredSlug =
+      artist.slug ||
+      sanitizeSlug(nameCandidate || "") ||
+      fallbackIdentifier;
+    const artistSlug = inferredSlug || fallbackIdentifier;
+    const targetRoute = buildRoute.artist(artistSlug);
+
+    try {
+      const data = await getArtistDetails(artistId);
+      const fetchedArtist = data?.artist ?? {};
+      const fetchedAlbums = Array.isArray(data?.albums) ? data.albums : [];
+
       const enrichedArtist = {
+        id: artistId,
+        external_id: artistId,
+        slug: artistSlug,
         ...artist,
-        ...data.artist,
-        // Map backend field names to frontend expectations
-        image: data.artist.image_url || artist.image,
-        albums: (data.albums || []).map(album => ({
+        ...fetchedArtist,
+        image: fetchedArtist.image_url || artist.image,
+        albums: fetchedAlbums.map((album) => ({
           ...album,
           cover: album.cover_url,
           releaseYear: album.release_year,
-          id: album.external_id
+          id: album.external_id,
         })),
         counts: {
-          albums: (data.albums || []).length,
-          songs: 0  // We don't have song count at artist level
-        }
+          albums: fetchedAlbums.length,
+          songs: 0,
+        },
       };
 
-      // Set the enriched artist in the store
       selectedArtist.set(enrichedArtist);
-      // Navigate to artists view
       navigate("artists");
+      navigateTo(targetRoute);
     } catch (err) {
       console.error("Failed to fetch artist details:", err);
       setMessage("Could not load complete artist data", "error");
-      // Fall back to basic artist data
-      selectedArtist.set(artist);
+      const fallbackArtist = {
+        ...artist,
+        id: artistId,
+        external_id: artistId,
+        slug: artistSlug,
+      };
+      selectedArtist.set(fallbackArtist);
       navigate("artists");
+      navigateTo(targetRoute);
     }
   }
 
@@ -897,7 +908,12 @@
     }
 
     const numericCandidate = Number(resolvedIdentifier);
-    const apiAlbumId = Number.isFinite(numericCandidate) ? numericCandidate : resolvedIdentifier;
+    const isNumericAlbumId = Number.isInteger(numericCandidate) && numericCandidate > 0;
+    if (!isNumericAlbumId) {
+      setMessage("Favoriting is only available for albums saved in your library.", "error");
+      return;
+    }
+    const apiAlbumId = numericCandidate;
     const favorite = Boolean(detail.favorite);
 
     // Get current rating from interactions
@@ -967,7 +983,12 @@
     const currentFavorite = entry ? Boolean(entry.favorite) : false;
 
     const numericCandidate = Number(resolvedIdentifier);
-    const apiAlbumId = Number.isFinite(numericCandidate) ? numericCandidate : resolvedIdentifier;
+    const isNumericAlbumId = Number.isInteger(numericCandidate) && numericCandidate > 0;
+    if (!isNumericAlbumId) {
+      setMessage("Ratings are only available for albums saved in your library.", "error");
+      return;
+    }
+    const apiAlbumId = numericCandidate;
 
     // Optimistic update
     updateAlbumEntry(
@@ -1050,7 +1071,8 @@
       on:logout={() => handleLogout(true)}
       on:navigate={handleNavigate}
       on:menutoggle={handleMenuToggle}
-      on:searchselect={handleSearchSelection}
+      on:selectartist={handleSpotifyArtistSelect}
+      on:selectalbum={handleSpotifyAlbumSelect}
     />
 
     <FlashMessage message={$message} kind={$messageKind} />
@@ -1083,6 +1105,11 @@
     {:else if $currentView === "playlists"}
       <PlaylistsView
         on:refresh={() => loadPlaylists({ silent: false })}
+        on:selectartist={handleSpotifyArtistSelect}
+        on:selectalbum={handleSpotifyAlbumSelect}
+      />
+    {:else if $currentView === "search"}
+      <SearchView
         on:selectartist={handleSpotifyArtistSelect}
         on:selectalbum={handleSpotifyAlbumSelect}
       />

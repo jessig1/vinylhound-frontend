@@ -4,3 +4,4 @@ export * from "./albums.js";
 export * from "./playlists.js";
 export * from "./content.js";
 export * from "./ui.js";
+export * from "./search.js";

@@ -171,16 +171,6 @@
     </div>
   </header>
 
-  {#if normalizedUsername}
-    <div class="spotify-search-section">
-      <h3>Search Spotify</h3>
-      <SpotifySearchSimple
-        on:selectartist={(e) => dispatch('selectartist', e.detail)}
-        on:selectalbum={(e) => dispatch('selectalbum', e.detail)}
-      />
-    </div>
-  {/if}
-
   {#if loading}
     <div class="playlists__state">
       <p>Loading playlists…</p>

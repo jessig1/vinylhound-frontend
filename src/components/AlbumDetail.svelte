@@ -162,16 +162,6 @@
     });
   }
 
-  function handleTrackRate(event) {
-    const { track, rating } = event.detail;
-    dispatch("rateTrack", {
-      track,
-      rating,
-      albumId: albumIdentifier ?? null,
-      album,
-    });
-  }
-
   function handleAddToPlaylist(event) {
     const { track } = event.detail;
     selectedTrack = track;
@@ -290,7 +280,7 @@
               album={album}
               artist={album?.artist}
               {canInteract}
-              on:rate={handleTrackRate}
+              {token}
               on:addToPlaylist={handleAddToPlaylist}
             />
           {/each}

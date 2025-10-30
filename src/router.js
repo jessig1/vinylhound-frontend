@@ -12,6 +12,7 @@ import {
 } from "./stores/albums";
 import { selectedPlaylistId } from "./stores/playlists";
 import { fetchAlbum, ApiError } from "./api";
+import { runSearch, clearSearchState, searchQuery, searchLoading } from "./stores/search";
 
 /**
  * Router configuration using page.js
@@ -43,6 +44,7 @@ export const routes = {
   ARTIST_DETAIL: "/artists/:slug",
   PLAYLISTS: "/playlists",
   PLAYLIST_DETAIL: "/playlists/:id",
+  SEARCH: "/search",
 };
 
 /**
@@ -134,6 +136,30 @@ export function initRouter() {
     const id = ctx.params.id;
     selectedPlaylistId.set(id);
     navigate("playlists");
+  });
+
+  // Search results route
+  page("/search", requireAuth, async (ctx) => {
+    const params = new URLSearchParams(ctx.querystring ?? "");
+    const term = params.get("q") ?? "";
+    const previousQuery = get(searchQuery);
+    const wasLoading = get(searchLoading);
+    const trimmed = term.trim();
+
+    if (!trimmed) {
+      navigate("search");
+      clearSearchState();
+      return;
+    }
+
+    navigate("search");
+    searchQuery.set(trimmed);
+
+    if (trimmed === previousQuery && wasLoading) {
+      return;
+    }
+
+    await runSearch(trimmed);
   });
 
   // 404 - redirect to home

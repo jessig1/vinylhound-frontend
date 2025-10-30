@@ -1,340 +1,517 @@
 <script>
-  import { createEventDispatcher } from "svelte";
+  import { createEventDispatcher, onDestroy, onMount } from "svelte";
   import { searchMusic } from "../api/search.js";
+  import { buildRoute, navigateTo } from "../router";
 
-  export let placeholder = "Search Spotify for artists and albums...";
+  export let placeholder = "Search for artists and albums...";
+
+  const MIN_QUERY_LENGTH = 2;
+  const SUGGESTION_LIMIT = 4;
+  const DEBOUNCE_MS = 250;
 
   const dispatch = createEventDispatcher();
 
+  let container;
   let query = "";
-  let searching = false;
-  let results = null;
-  let error = "";
+  let trimmedQuery = "";
+  let suggestions = [];
+  let suggestionsLoading = false;
+  let suggestionsError = "";
+  let highlightedIndex = -1;
+  let lastRequestedTerm = "";
 
-  async function handleSearch() {
-    if (!query.trim()) {
-      results = null;
+  let debounceTimer = null;
+  let requestSequence = 0;
+
+  $: trimmedQuery = query.trim();
+
+  function handleInput(event) {
+    query = event.currentTarget.value;
+    scheduleSuggestions(query);
+  }
+
+  function scheduleSuggestions(rawValue) {
+    const term = rawValue.trim();
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+    }
+
+    if (term.length < MIN_QUERY_LENGTH) {
+      resetSuggestions();
       return;
     }
 
-    searching = true;
-    error = "";
+    debounceTimer = setTimeout(() => {
+      fetchSuggestions(term);
+    }, DEBOUNCE_MS);
+  }
+
+  async function fetchSuggestions(term) {
+    const currentSequence = ++requestSequence;
+    suggestionsLoading = true;
+    suggestionsError = "";
 
     try {
-      // Search for artists and albums only (no tracks)
-      const data = await searchMusic(query.trim(), "all", 10, true);
-
-      // Filter to only show artists and albums
-      results = {
-        artists: data.artists || [],
-        albums: data.albums || []
-      };
-
-      dispatch("results", results);
+      const data = await searchMusic(term, "all", 10, false);
+      if (currentSequence !== requestSequence) {
+        return;
+      }
+      suggestions = buildSuggestions(data, term);
+      highlightedIndex = -1;
+      lastRequestedTerm = term;
+      if (!suggestions.length) {
+        suggestionsError = "";
+      }
     } catch (err) {
-      error = err.message || "Search failed";
-      results = null;
-      dispatch("error", { error: err.message });
+      if (currentSequence !== requestSequence) {
+        return;
+      }
+      suggestions = [];
+      suggestionsError = err?.message || "Search failed";
+      dispatch("error", { error: suggestionsError });
     } finally {
-      searching = false;
+      if (currentSequence === requestSequence) {
+        suggestionsLoading = false;
+      }
     }
   }
 
-  function handleKeyDown(event) {
-    if (event.key === "Enter") {
-      handleSearch();
-    }
-  }
-
-  function selectArtist(artist) {
-    dispatch("selectartist", artist);
-    query = "";
-    results = null;
-  }
-
-  function selectAlbum(album) {
-    dispatch("selectalbum", album);
-    query = "";
-    results = null;
+  function resetSuggestions() {
+    suggestions = [];
+    suggestionsError = "";
+    highlightedIndex = -1;
+    suggestionsLoading = false;
+    lastRequestedTerm = "";
   }
 
   function clearSearch() {
     query = "";
-    results = null;
-    error = "";
+    resetSuggestions();
   }
+
+  function handleSearch() {
+    const term = trimmedQuery;
+    if (!term) {
+      resetSuggestions();
+      return;
+    }
+    navigateTo(`/search?q=${encodeURIComponent(term)}`);
+    dispatch("fullsearch", { query: term });
+    resetSuggestions();
+  }
+
+  function handleKeyDown(event) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (highlightedIndex >= 0 && highlightedIndex < suggestions.length) {
+        selectSuggestion(suggestions[highlightedIndex]);
+      } else {
+        handleSearch();
+      }
+    } else if (event.key === "ArrowDown") {
+      if (!suggestions.length) {
+        return;
+      }
+      event.preventDefault();
+      highlightedIndex = (highlightedIndex + 1) % suggestions.length;
+      ensureHighlightedVisible();
+    } else if (event.key === "ArrowUp") {
+      if (!suggestions.length) {
+        return;
+      }
+      event.preventDefault();
+      highlightedIndex = (highlightedIndex - 1 + suggestions.length) % suggestions.length;
+      ensureHighlightedVisible();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      resetSuggestions();
+    }
+  }
+
+  function ensureHighlightedVisible() {
+    requestAnimationFrame(() => {
+      const list = container?.querySelector(".suggestion-list");
+      if (!list) return;
+      const item = list.children?.[highlightedIndex];
+      if (item?.scrollIntoView) {
+        item.scrollIntoView({ block: "nearest" });
+      }
+    });
+  }
+
+  function selectSuggestion(item) {
+    if (!item) return;
+
+    if (item.type === "artist") {
+      dispatch("selectartist", item.raw);
+      if (item.href) {
+        navigateTo(item.href);
+      }
+    } else if (item.type === "album") {
+      dispatch("selectalbum", item.raw);
+    } else if (item.href) {
+      navigateTo(item.href);
+    }
+
+    query = "";
+    resetSuggestions();
+  }
+
+  function buildSuggestions(data, fallbackTerm) {
+    const items = [];
+    const seen = new Set();
+
+    if (Array.isArray(data?.artists)) {
+      for (const artist of data.artists) {
+        if (items.length >= SUGGESTION_LIMIT) break;
+        const id = normalizeId(artist);
+        if (!id || seen.has(`artist-${id}`)) continue;
+        seen.add(`artist-${id}`);
+        items.push({
+          key: `artist-${id}`,
+          type: "artist",
+          title: artist.name ?? fallbackTerm,
+          subtitle:
+            Array.isArray(artist.genres) && artist.genres.length
+              ? artist.genres[0]
+              : "Artist",
+          image: artist.image_url,
+          href: artistHref(artist),
+          raw: artist,
+        });
+      }
+    }
+
+    if (items.length < SUGGESTION_LIMIT && Array.isArray(data?.albums)) {
+      for (const album of data.albums) {
+        if (items.length >= SUGGESTION_LIMIT) break;
+        const id = normalizeAlbumId(album);
+        if (!id || seen.has(`album-${id}`)) continue;
+        seen.add(`album-${id}`);
+        const releaseYear = extractYear(album.release_date ?? album.releaseYear);
+        items.push({
+          key: `album-${id}`,
+          type: "album",
+          title: album.title ?? fallbackTerm,
+          subtitle: releaseYear
+            ? `${album.artist ?? "Album"} • ${releaseYear}`
+            : album.artist ?? "Album",
+          image: album.image_url ?? album.cover,
+          raw: album,
+        });
+      }
+    }
+
+    return items.slice(0, SUGGESTION_LIMIT);
+  }
+
+  function normalizeId(entity) {
+    return (
+      entity?.external_id ||
+      entity?.id ||
+      entity?.spotify_id ||
+      entity?.slug ||
+      entity?.name ||
+      null
+    );
+  }
+
+  function normalizeAlbumId(album) {
+    return (
+      album?.id ||
+      album?.external_id ||
+      album?.spotify_id ||
+      (album?.artist && album?.title && `${album.artist}-${album.title}`) ||
+      null
+    );
+  }
+
+  function extractYear(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) {
+      return date.getFullYear();
+    }
+    const match = String(value).match(/\d{4}/);
+    return match ? match[0] : "";
+  }
+
+  function toSlug(value) {
+    return String(value ?? "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "");
+  }
+
+  function artistHref(artist) {
+    const directSlug =
+      (typeof artist?.slug === "string" && artist.slug.trim()) ||
+      toSlug(artist?.name) ||
+      String(artist?.external_id ?? "") ||
+      String(artist?.id ?? "");
+
+    const finalSlug = directSlug.trim() ? directSlug.trim() : toSlug(artist?.id);
+    if (!finalSlug) {
+      return buildRoute.artists();
+    }
+    return buildRoute.artist(finalSlug);
+  }
+
+  function handleDocumentClick(event) {
+    if (!container?.contains(event.target)) {
+      resetSuggestions();
+    }
+  }
+
+  onMount(() => {
+    document.addEventListener("click", handleDocumentClick, true);
+  });
+
+  onDestroy(() => {
+    document.removeEventListener("click", handleDocumentClick, true);
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+    }
+  });
 </script>
 
-<div class="spotify-search-simple">
+<div class="spotify-search-simple" bind:this={container}>
   <div class="search-box">
     <input
       type="text"
+      class="search-input"
       bind:value={query}
+      on:input={handleInput}
       on:keydown={handleKeyDown}
       {placeholder}
-      class="search-input"
-      disabled={searching}
     />
     <div class="search-buttons">
       {#if query}
-        <button type="button" on:click={clearSearch} class="btn-clear" title="Clear">
+        <button type="button" class="btn-clear" title="Clear" on:click={clearSearch}>
           ✕
         </button>
       {/if}
       <button
         type="button"
-        on:click={handleSearch}
         class="btn-search"
-        disabled={searching || !query.trim()}
+        on:click={handleSearch}
+        disabled={!trimmedQuery}
       >
-        {searching ? "..." : "Search"}
+        Search
       </button>
     </div>
   </div>
 
-  {#if error}
-    <div class="error-message">{error}</div>
+  {#if suggestionsError}
+    <div class="error-message">{suggestionsError}</div>
+  {:else if suggestionsLoading && !suggestions.length}
+    <div class="suggestion-status">Searching…</div>
   {/if}
 
-  {#if results}
-    <div class="results">
-      {#if results.artists && results.artists.length > 0}
-        <section class="result-section">
-          <h4>Artists</h4>
-          <div class="result-list">
-            {#each results.artists as artist}
-              <button type="button" class="result-card" on:click={() => selectArtist(artist)}>
-                {#if artist.image_url}
-                  <img src={artist.image_url} alt={artist.name} class="result-img" />
-                {:else}
-                  <div class="result-img-placeholder">{artist.name.charAt(0)}</div>
-                {/if}
-                <div class="result-info">
-                  <div class="result-title">{artist.name}</div>
-                  {#if artist.genres && artist.genres.length > 0}
-                    <div class="result-subtitle">{artist.genres[0]}</div>
-                  {/if}
-                </div>
-              </button>
-            {/each}
-          </div>
-        </section>
-      {/if}
-
-      {#if results.albums && results.albums.length > 0}
-        <section class="result-section">
-          <h4>Albums</h4>
-          <div class="result-list">
-            {#each results.albums as album}
-              <button type="button" class="result-card" on:click={() => selectAlbum(album)}>
-                {#if album.image_url}
-                  <img src={album.image_url} alt={album.title} class="result-img" />
-                {:else}
-                  <div class="result-img-placeholder">{album.title.charAt(0)}</div>
-                {/if}
-                <div class="result-info">
-                  <div class="result-title">{album.title}</div>
-                  <div class="result-subtitle">{album.artist}</div>
-                  {#if album.release_date}
-                    <div class="result-year">{new Date(album.release_date).getFullYear()}</div>
-                  {/if}
-                </div>
-              </button>
-            {/each}
-          </div>
-        </section>
-      {/if}
-
-      {#if (!results.artists || results.artists.length === 0) && (!results.albums || results.albums.length === 0)}
-        <div class="no-results">No results found for "{query}"</div>
-      {/if}
-    </div>
+  {#if suggestions.length}
+    <ul class="suggestion-list">
+      {#each suggestions as item, index (item.key)}
+        <li class:selected={index === highlightedIndex}>
+          <button type="button" class="suggestion" on:click={() => selectSuggestion(item)}>
+            {#if item.image}
+              <img src={item.image} alt={item.title} />
+            {:else}
+              <div class="placeholder">{item.title.charAt(0)}</div>
+            {/if}
+            <div class="meta">
+              <span class="title">{item.title}</span>
+              <span class="subtitle">{item.subtitle}</span>
+            </div>
+            <span class="badge">{item.type}</span>
+          </button>
+        </li>
+      {/each}
+    </ul>
+  {:else if !suggestionsLoading && trimmedQuery.length >= MIN_QUERY_LENGTH}
+    <div class="suggestion-status">No quick matches for “{trimmedQuery}”. Press Enter to search.</div>
   {/if}
 </div>
 
 <style>
   .spotify-search-simple {
+    position: relative;
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 0.5rem;
   }
 
   .search-box {
     display: flex;
-    gap: 0.5rem;
     align-items: center;
+    gap: 0.5rem;
   }
 
   .search-input {
     flex: 1;
     padding: 0.65rem 1rem;
-    border: 2px solid rgba(79, 70, 229, 0.2);
-    border-radius: 0.75rem;
+    border-radius: 0.9rem;
+    border: 1px solid rgba(99, 102, 241, 0.35);
     font-size: 0.95rem;
-    transition: all 0.2s ease;
-    background: white;
+    transition: box-shadow 0.2s ease, border-color 0.2s ease;
   }
 
   .search-input:focus {
     outline: none;
-    border-color: rgba(79, 70, 229, 0.5);
-    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
-  }
-
-  .search-input:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
+    border-color: #4f46e5;
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.18);
   }
 
   .search-buttons {
     display: flex;
-    gap: 0.5rem;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .btn-clear,
+  .btn-search {
+    border: none;
+    border-radius: 0.85rem;
+    padding: 0.55rem 1rem;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
   }
 
   .btn-clear {
-    padding: 0.65rem 0.9rem;
-    background: rgba(239, 68, 68, 0.1);
-    border: none;
-    border-radius: 0.75rem;
-    color: #b91c1c;
-    cursor: pointer;
-    font-weight: 600;
-    transition: background 0.2s ease;
-    font-size: 0.9rem;
+    background: rgba(79, 70, 229, 0.08);
+    color: #312e81;
   }
 
-  .btn-clear:hover {
-    background: rgba(239, 68, 68, 0.2);
+  .btn-clear:hover,
+  .btn-clear:focus-visible {
+    background: rgba(79, 70, 229, 0.18);
+    outline: none;
   }
 
   .btn-search {
-    padding: 0.65rem 1.25rem;
-    background: linear-gradient(135deg, #6366f1, #4f46e5);
-    border: none;
-    border-radius: 0.75rem;
-    color: white;
-    cursor: pointer;
+    background: linear-gradient(135deg, #4f46e5, #6366f1);
+    color: #ffffff;
     font-weight: 600;
-    font-size: 0.9rem;
-    transition: all 0.2s ease;
-    min-width: 80px;
-  }
-
-  .btn-search:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow: 0 6px 16px rgba(79, 70, 229, 0.3);
   }
 
   .btn-search:disabled {
-    opacity: 0.6;
+    background: rgba(99, 102, 241, 0.25);
     cursor: not-allowed;
   }
 
-  .error-message {
-    padding: 0.65rem 1rem;
-    background: rgba(239, 68, 68, 0.1);
-    border-radius: 0.75rem;
-    color: #b91c1c;
+  .btn-search:not(:disabled):hover,
+  .btn-search:not(:disabled):focus-visible {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 20px rgba(79, 70, 229, 0.26);
+    outline: none;
+  }
+
+  .error-message,
+  .suggestion-status {
     font-size: 0.85rem;
+    color: rgba(79, 70, 229, 0.7);
+    padding: 0 0.4rem;
   }
 
-  .results {
-    display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
-    max-height: 400px;
-    overflow-y: auto;
-    padding: 0.75rem;
-    background: rgba(255, 255, 255, 0.5);
-    border-radius: 0.75rem;
+  .error-message {
+    color: #dc2626;
   }
 
-  .result-section h4 {
-    margin: 0 0 0.6rem 0;
-    font-size: 1rem;
-    color: #312e81;
-    font-weight: 700;
-  }
-
-  .result-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 0.75rem;
-  }
-
-  .result-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem;
-    border-radius: 0.75rem;
-    background: white;
-    border: none;
-    cursor: pointer;
-    text-align: center;
-    transition: all 0.2s ease;
-    box-shadow: 0 2px 8px rgba(30, 41, 59, 0.08);
-  }
-
-  .result-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 20px rgba(30, 41, 59, 0.15);
-  }
-
-  .result-img,
-  .result-img-placeholder {
-    width: 100%;
-    aspect-ratio: 1;
-    border-radius: 0.5rem;
-    object-fit: cover;
-  }
-
-  .result-img-placeholder {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: linear-gradient(135deg, #6366f1, #4f46e5);
-    color: white;
-    font-weight: 700;
-    font-size: 2rem;
-  }
-
-  .result-info {
+  .suggestion-list {
+    list-style: none;
+    margin: 0;
+    padding: 0.4rem 0;
+    border-radius: 1rem;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18);
+    background: rgba(255, 255, 255, 0.96);
     display: flex;
     flex-direction: column;
     gap: 0.15rem;
+    max-height: 18rem;
+    overflow-y: auto;
+  }
+
+  .suggestion-list li.selected .suggestion {
+    background: rgba(79, 70, 229, 0.12);
+  }
+
+  .suggestion {
     width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.55rem 0.9rem;
+    border: none;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    border-radius: 0.85rem;
+    transition: background 0.2s ease, transform 0.2s ease;
   }
 
-  .result-title {
-    font-weight: 600;
+  .suggestion:hover,
+  .suggestion:focus-visible {
+    background: rgba(79, 70, 229, 0.1);
+    outline: none;
+  }
+
+  .suggestion img,
+  .suggestion .placeholder {
+    width: 2.45rem;
+    height: 2.45rem;
+    border-radius: 0.75rem;
+    object-fit: cover;
+    flex: 0 0 auto;
+    background: rgba(79, 70, 229, 0.2);
+    display: grid;
+    place-items: center;
     color: #1f2937;
-    font-size: 0.85rem;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .title {
+    font-weight: 600;
+    color: #111827;
+    font-size: 0.95rem;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  .result-subtitle,
-  .result-year {
-    font-size: 0.75rem;
-    color: rgba(71, 85, 105, 0.9);
+  .subtitle {
+    font-size: 0.8rem;
+    color: rgba(55, 65, 81, 0.75);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  .no-results {
-    padding: 1.5rem;
-    text-align: center;
-    color: rgba(71, 85, 105, 0.9);
-    font-size: 0.9rem;
+  .badge {
+    text-transform: uppercase;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: #4338ca;
+    background: rgba(79, 70, 229, 0.16);
+    padding: 0.25rem 0.55rem;
+    border-radius: 999px;
   }
 
-  @media (max-width: 640px) {
-    .result-list {
-      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  @media (max-width: 920px) {
+    .suggestion-list {
+      position: static;
+      box-shadow: none;
+      border: 1px solid rgba(148, 163, 184, 0.28);
     }
   }
 </style>

@@ -1,4 +1,4 @@
-import { post, get } from './client.js';
+import { post, get, authHeaders } from "./client.js";
 
 /**
  * Search for music across Spotify
@@ -6,21 +6,36 @@ import { post, get } from './client.js';
  * @param {string} type - Type of search: "artist", "album", "track", or "all"
  * @param {number} limit - Maximum number of results (default: 20)
  * @param {boolean} storeResults - Whether to store results in database (default: false)
+ * @param {Object} [options] - Additional request options
+ * @param {string} [options.token] - Auth token for the request
+ * @param {Object} [options.headers] - Additional headers to merge into the request
  * @returns {Promise<{artists: Array, albums: Array, tracks: Array}>}
  */
-export async function searchMusic(query, type = "all", limit = 20, storeResults = false) {
-    console.log(`[Search API] Searching for "${query}" (type: ${type}, limit: ${limit})`);
+export async function searchMusic(query, type = "all", limit = 20, storeResults = false, options = {}) {
+  console.log(`[Search API] Searching for "${query}" (type: ${type}, limit: ${limit})`);
 
-    const response = await post('/v1/search', {
-        query,
-        type,
-        provider: "spotify",
-        limit,
-        store_results: storeResults
-    });
+  const { token, headers: extraHeaders } = options ?? {};
+  const headers = {
+    ...(extraHeaders || {}),
+    ...(token ? authHeaders(token) : {}),
+  };
 
-    console.log(`[Search API] Search results:`, response);
-    return response;
+  const response = await post(
+    "/v1/search",
+    {
+      query,
+      type,
+      provider: "spotify",
+      limit,
+      store_results: storeResults,
+    },
+    {
+      headers: Object.keys(headers).length ? headers : undefined,
+    }
+  );
+
+  console.log(`[Search API] Search results:`, response);
+  return response;
 }
 
 /**

@@ -1,17 +1,33 @@
 <script>
   import { createEventDispatcher } from "svelte";
+  import { favoriteTrack, unfavoriteTrack } from "../api";
 
   export let track;
   export let trackNumber;
   export let album;
   export let artist;
   export let canInteract = false;
+  export let token = null;
 
   const dispatch = createEventDispatcher();
 
   let showActions = false;
   let showMusicServices = false;
-  let currentRating = track?.rating || null; // thumbs up (1), thumbs down (-1), or null
+  let isFavorite = deriveFavoriteState(track);
+  let isUpdatingFavorite = false;
+  let lastKnownTrackId = resolveTrackId(track);
+  let hasResolvableTrackId = false;
+  let normalizedTrackId = normalizeTrackId(lastKnownTrackId);
+
+  $: {
+    const nextTrackId = resolveTrackId(track);
+    if (nextTrackId !== lastKnownTrackId) {
+      isFavorite = deriveFavoriteState(track);
+      lastKnownTrackId = nextTrackId;
+    }
+    normalizedTrackId = normalizeTrackId(nextTrackId);
+    hasResolvableTrackId = normalizedTrackId !== null;
+  }
 
   // Generate search URLs for music services
   $: searchQuery = encodeURIComponent(`${artist} ${track?.title || ""}`);
@@ -63,22 +79,102 @@
     }
   }
 
-  function handleThumbsUp() {
-    const newRating = currentRating === 1 ? null : 1;
-    currentRating = newRating;
-    dispatch("rate", {
-      track,
-      rating: newRating,
-    });
+  function resolveTrackId(candidate) {
+    if (!candidate || typeof candidate !== "object") {
+      return null;
+    }
+    const possibilities = [
+      candidate.id,
+      candidate.songId,
+      candidate.song_id,
+      candidate.trackId,
+      candidate.track_id,
+      candidate.external_id,
+    ];
+    for (const option of possibilities) {
+      if (option !== null && option !== undefined && String(option).trim() !== "") {
+        return option;
+      }
+    }
+    return null;
   }
 
-  function handleThumbsDown() {
-    const newRating = currentRating === -1 ? null : -1;
-    currentRating = newRating;
-    dispatch("rate", {
-      track,
-      rating: newRating,
-    });
+  function deriveFavoriteState(candidate) {
+    if (!candidate || typeof candidate !== "object") {
+      return false;
+    }
+    const keys = ["isFavorite", "favorite", "favorited", "is_favorite", "isFavorited"];
+    for (const key of keys) {
+      if (key in candidate) {
+        return Boolean(candidate[key]);
+      }
+    }
+    return false;
+  }
+
+  function normalizeTrackId(value) {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    if (typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value > 0) {
+      return value;
+    }
+    const str = String(value).trim();
+    if (!str) {
+      return null;
+    }
+    if (!/^\d+$/.test(str)) {
+      return null;
+    }
+    const numeric = Number(str);
+    return Number.isFinite(numeric) && Number.isInteger(numeric) && numeric > 0 ? numeric : null;
+  }
+
+  async function toggleFavorite() {
+    if (!canInteract || isUpdatingFavorite) {
+      return;
+    }
+    if (!hasResolvableTrackId || normalizedTrackId === null) {
+      console.warn("TrackItem: track does not have a numeric ID; skipping favorite toggle.", track);
+      dispatch("favoriteError", {
+        track,
+        favorite: isFavorite,
+        error: new Error("Cannot favorite this track because it is missing a numeric ID."),
+      });
+      return;
+    }
+    const trackId = normalizedTrackId;
+    if (!token) {
+      dispatch("favoriteError", {
+        track,
+        favorite: isFavorite,
+        error: new Error("Authentication required"),
+      });
+      return;
+    }
+
+    const previousState = isFavorite;
+    const nextState = !previousState;
+
+    isFavorite = nextState;
+    isUpdatingFavorite = true;
+    dispatch("favoriteChange", { track, favorite: nextState });
+
+    try {
+      let response = null;
+      if (nextState) {
+        response = await favoriteTrack(trackId, token);
+      } else {
+        await unfavoriteTrack(trackId, token);
+      }
+      dispatch("favoriteSuccess", { track, favorite: nextState, response });
+    } catch (err) {
+      console.error("TrackItem: failed to update favorite state", err);
+      isFavorite = previousState; // Roll back optimistic update
+      dispatch("favoriteError", { track, favorite: previousState, error: err });
+    } finally {
+      isUpdatingFavorite = false;
+    }
   }
 
   function handleAddToPlaylist() {
@@ -144,31 +240,26 @@
         {/if}
       </div>
 
-      <!-- Rating Section -->
+      <!-- Favorite Section -->
       {#if canInteract}
         <div class="action-section">
-          <div class="rating-buttons">
-            <button
-              class="action-btn action-btn--thumbs"
-              class:active={currentRating === 1}
-              on:click={handleThumbsUp}
-              aria-label="Thumbs up"
-              title="I like this track"
-            >
-              <span class="action-icon" class:active={currentRating === 1}>👍</span>
-              Thumbs Up
-            </button>
-            <button
-              class="action-btn action-btn--thumbs"
-              class:active={currentRating === -1}
-              on:click={handleThumbsDown}
-              aria-label="Thumbs down"
-              title="I don't like this track"
-            >
-              <span class="action-icon" class:active={currentRating === -1}>👎</span>
-              Thumbs Down
-            </button>
-          </div>
+          <button
+            type="button"
+            class="action-btn action-btn--favorite"
+            class:active={isFavorite}
+            on:click={toggleFavorite}
+            aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+            aria-pressed={isFavorite}
+            disabled={isUpdatingFavorite || !hasResolvableTrackId}
+            title={!hasResolvableTrackId
+              ? "Favorite tracking is only available for tracks saved in your library."
+              : undefined}
+          >
+            <span class="action-icon" class:active={isFavorite} aria-hidden="true">
+              {isFavorite ? "❤️" : "🤍"}
+            </span>
+            {isFavorite ? "Favorited" : "Add to Favorites"}
+          </button>
         </div>
 
         <!-- Playlist Section -->
@@ -179,7 +270,7 @@
           </button>
         </div>
       {:else}
-        <p class="signin-prompt">Sign in to rate tracks and create playlists</p>
+        <p class="signin-prompt">Sign in to favorite tracks and create playlists</p>
       {/if}
     </div>
   {/if}
@@ -311,10 +402,20 @@
     transform: translateY(-1px);
   }
 
-  .action-btn--thumbs.active {
-    background: #4f46e5;
-    color: white;
-    border-color: #4f46e5;
+  .action-btn--favorite {
+    justify-content: flex-start;
+  }
+
+  .action-btn--favorite.active {
+    background: rgba(239, 68, 68, 0.12);
+    color: #b91c1c;
+    border-color: rgba(239, 68, 68, 0.6);
+  }
+
+  .action-btn--favorite:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+    transform: none;
   }
 
   .action-icon {
@@ -333,12 +434,6 @@
   @keyframes bounce {
     0%, 100% { transform: scale(1); }
     50% { transform: scale(1.3); }
-  }
-
-  .rating-buttons {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.5rem;
   }
 
   .music-services {
@@ -410,8 +505,5 @@
       grid-template-columns: 1fr;
     }
 
-    .rating-buttons {
-      grid-template-columns: 1fr;
-    }
   }
 </style>
