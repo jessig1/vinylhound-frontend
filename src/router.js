@@ -12,6 +12,7 @@ import {
 } from "./stores/albums";
 import { selectedPlaylistId } from "./stores/playlists";
 import { fetchAlbum, ApiError } from "./api";
+import { runSearch, clearSearchState, searchQuery, searchLoading } from "./stores/search";
 
 /**
  * Router configuration using page.js
@@ -43,6 +44,7 @@ export const routes = {
   ARTIST_DETAIL: "/artists/:slug",
   PLAYLISTS: "/playlists",
   PLAYLIST_DETAIL: "/playlists/:id",
+  SEARCH: "/search",
 };
 
 /**
@@ -72,7 +74,21 @@ export function initRouter() {
     albumViewId.set(albumId);
     navigate("album");
 
-    // Load album data
+    // Check if album data is already loaded (e.g., from Spotify search)
+    const currentAlbumData = get(albumViewData);
+    const isAlreadyLoaded = currentAlbumData &&
+                           (currentAlbumData.id === albumId ||
+                            currentAlbumData.external_id === albumId ||
+                            currentAlbumData.spotify_id === albumId);
+
+    // Skip fetching if data is already loaded or if ID looks like external ID
+    const isExternalId = typeof albumId === 'string' && /[^0-9]/.test(albumId);
+    if (isAlreadyLoaded || isExternalId) {
+      console.log('Skipping album fetch - data already loaded or external ID:', albumId);
+      return;
+    }
+
+    // Load album data from database
     albumViewLoading.set(true);
     albumViewError.set("");
 
@@ -120,6 +136,30 @@ export function initRouter() {
     const id = ctx.params.id;
     selectedPlaylistId.set(id);
     navigate("playlists");
+  });
+
+  // Search results route
+  page("/search", requireAuth, async (ctx) => {
+    const params = new URLSearchParams(ctx.querystring ?? "");
+    const term = params.get("q") ?? "";
+    const previousQuery = get(searchQuery);
+    const wasLoading = get(searchLoading);
+    const trimmed = term.trim();
+
+    if (!trimmed) {
+      navigate("search");
+      clearSearchState();
+      return;
+    }
+
+    navigate("search");
+    searchQuery.set(trimmed);
+
+    if (trimmed === previousQuery && wasLoading) {
+      return;
+    }
+
+    await runSearch(trimmed);
   });
 
   // 404 - redirect to home

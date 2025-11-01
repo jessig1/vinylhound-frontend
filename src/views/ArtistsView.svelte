@@ -46,5 +46,6 @@
     error={$artistsError}
     on:retry={handleRetry}
     on:select={handleSelect}
+    on:selectalbum={handleSelectAlbum}
   />
 {/if}

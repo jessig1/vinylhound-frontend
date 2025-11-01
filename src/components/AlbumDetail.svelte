@@ -3,6 +3,7 @@
   import RatingStars from "./RatingStars.svelte";
   import TrackItem from "./TrackItem.svelte";
   import AddToPlaylistModal from "./AddToPlaylistModal.svelte";
+  import LoginPromptModal from "./LoginPromptModal.svelte";
   import { searchSongs } from "../api";
   import {
     coverAltTextForAlbum,
@@ -34,14 +35,15 @@
   let selectedTrack = null;
   let loadingSongs = false;
   let songsList = [];
+  let showLoginPrompt = false;
 
   const dispatch = createEventDispatcher();
 
   $: fallbackGenres = discoverGenres(album);
   $: currentRating = normalizeAlbumRating(userRating);
 
-  // Load songs from database when album changes
-  $: if (albumId) {
+  // Load songs from database when album changes, but only if album doesn't already have tracks
+  $: if (albumId && (!album.tracks || album.tracks.length === 0)) {
     loadSongsForAlbum(albumId);
   }
 
@@ -50,6 +52,12 @@
 
   async function loadSongsForAlbum(id) {
     if (!id) return;
+
+    // Skip if this looks like an external ID (Spotify, etc.) - contains non-numeric characters
+    if (typeof id === 'string' && /[^0-9]/.test(id)) {
+      console.log('Skipping song load for external album ID:', id);
+      return;
+    }
 
     loadingSongs = true;
     try {
@@ -156,16 +164,6 @@
     });
   }
 
-  function handleTrackRate(event) {
-    const { track, rating } = event.detail;
-    dispatch("rateTrack", {
-      track,
-      rating,
-      albumId: albumIdentifier ?? null,
-      album,
-    });
-  }
-
   function handleAddToPlaylist(event) {
     const { track } = event.detail;
     selectedTrack = track;
@@ -189,7 +187,11 @@
   }
 
   function handleAddAllToPlaylist() {
-    if (!canInteract || normalizedTracks.length === 0) return;
+    if (normalizedTracks.length === 0) return;
+    if (!canInteract) {
+      showLoginPrompt = true;
+      return;
+    }
     // Create a special track object representing all tracks
     selectedTrack = {
       id: null,
@@ -198,6 +200,24 @@
       allTracks: normalizedTracks,
     };
     showPlaylistModal = true;
+  }
+
+  function handleRequiresLogin() {
+    showLoginPrompt = true;
+  }
+
+  function handleLoginPromptLogin() {
+    showLoginPrompt = false;
+    dispatch("navigateToLogin");
+  }
+
+  function handleLoginPromptSignup() {
+    showLoginPrompt = false;
+    dispatch("navigateToSignup");
+  }
+
+  function handleLoginPromptClose() {
+    showLoginPrompt = false;
   }
 </script>
 
@@ -268,7 +288,7 @@
     <section class="album-detail__tracks" aria-label="Track list">
       <div class="tracks-header">
         <h3>Track list</h3>
-        {#if canInteract && normalizedTracks.length > 0}
+        {#if normalizedTracks.length > 0}
           <button class="btn-add-all" on:click={handleAddAllToPlaylist}>
             <span class="icon">➕</span>
             Add All to Playlist
@@ -284,8 +304,9 @@
               album={album}
               artist={album?.artist}
               {canInteract}
-              on:rate={handleTrackRate}
+              {token}
               on:addToPlaylist={handleAddToPlaylist}
+              on:requiresLogin={handleRequiresLogin}
             />
           {/each}
         </ol>
@@ -302,6 +323,14 @@
   {token}
   on:success={handlePlaylistModalSuccess}
   on:close={handlePlaylistModalClose}
+/>
+
+<LoginPromptModal
+  isOpen={showLoginPrompt}
+  message="Add tracks to playlists and manage your music collection."
+  on:login={handleLoginPromptLogin}
+  on:signup={handleLoginPromptSignup}
+  on:close={handleLoginPromptClose}
 />
 
 <style>

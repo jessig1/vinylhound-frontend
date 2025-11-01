@@ -26,6 +26,14 @@
     dispatch("addToPlaylist", event.detail);
   }
 
+  function handleNavigateToLogin() {
+    dispatch("navigateToLogin");
+  }
+
+  function handleNavigateToSignup() {
+    dispatch("navigateToSignup");
+  }
+
   // Derive album interaction
   $: albumViewInteraction = deriveAlbumViewInteraction($albumViewData, $albumViewId, $albumInteractions);
 
@@ -70,6 +78,8 @@
     token={$token}
     on:rate={handleRate}
     on:addToPlaylist={handleAddToPlaylist}
+    on:navigateToLogin={handleNavigateToLogin}
+    on:navigateToSignup={handleNavigateToSignup}
   />
 </section>
 

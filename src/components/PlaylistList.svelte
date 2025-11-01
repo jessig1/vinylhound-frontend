@@ -1,6 +1,7 @@
 <script>
   import { createEventDispatcher } from "svelte";
   import PlaylistEditor from "./PlaylistEditor.svelte";
+  import SpotifySearchSimple from "./SpotifySearchSimple.svelte";
   import { fetchPlaylist, removeSongFromPlaylist } from "../api/playlists.js";
 
   export let playlists = [];
@@ -316,6 +317,21 @@
     margin: 0.35rem 0 0;
     font-size: 1rem;
     color: rgba(55, 65, 81, 0.8);
+  }
+
+  .spotify-search-section {
+    background: rgba(255, 255, 255, 0.8);
+    border-radius: 1rem;
+    padding: 1.5rem;
+    box-shadow: 0 8px 24px rgba(79, 70, 229, 0.12);
+    border: 2px dashed rgba(79, 70, 229, 0.2);
+  }
+
+  .spotify-search-section h3 {
+    margin: 0 0 1rem 0;
+    font-size: 1.1rem;
+    color: #312e81;
+    font-weight: 700;
   }
 
   .btn-create {

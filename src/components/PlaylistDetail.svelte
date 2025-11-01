@@ -97,10 +97,6 @@
     return Array.from(genreSet).sort();
   }
 
-  function handleTrackRate(event) {
-    dispatch("rateTrack", event.detail);
-  }
-
   function handleAddToPlaylist(event) {
     const { track } = event.detail;
     selectedTrack = track;
@@ -289,7 +285,7 @@
                   album={{ title: song.album }}
                   artist={song.artist}
                   {canInteract}
-                  on:rate={handleTrackRate}
+                  {token}
                   on:addToPlaylist={handleAddToPlaylist}
                 />
               </div>

@@ -33,3 +33,6 @@ export {
 
 // Export songs API
 export { searchSongs, fetchSong } from "./songs.js";
+
+// Export favorites API
+export { listFavoriteTracks, favoriteTrack, unfavoriteTrack } from "./favorites.js";
