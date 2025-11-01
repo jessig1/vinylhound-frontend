@@ -30,7 +30,7 @@ export async function searchMusic(query, type = "all", limit = 20, storeResults 
       store_results: storeResults,
     },
     {
-      headers: Object.keys(headers).length ? headers : undefined,
+      headers,
     }
   );
 
@@ -39,20 +39,36 @@ export async function searchMusic(query, type = "all", limit = 20, storeResults 
 }
 
 /**
- * Import a complete album from Spotify
+ * Import a complete album from Spotify into the authenticated user's library
  * @param {string} albumId - The Spotify album ID
+ * @param {Object} [options]
+ * @param {string} [options.token] - Auth token for the user performing the import
+ * @param {string} [options.provider="spotify"] - Music provider identifier
  * @returns {Promise<{message: string}>}
  */
-export async function importAlbum(albumId) {
-    console.log(`[Search API] Importing album ${albumId}`);
+export async function importAlbum(albumId, options = {}) {
+  const { token, provider = "spotify", headers: extraHeaders } = options ?? {};
 
-    const response = await post('/v1/import/album', {
-        album_id: albumId,
-        provider: "spotify"
-    });
+  console.log(`[Search API] Importing album ${albumId} via ${provider}`);
 
-    console.log(`[Search API] Import response:`, response);
-    return response;
+  const headers = {
+    ...(extraHeaders || {}),
+    ...(token ? authHeaders(token) : {}),
+  };
+
+  const response = await post(
+    "/v1/import/album",
+    {
+      album_id: albumId,
+      provider,
+    },
+    {
+      headers,
+    }
+  );
+
+  console.log(`[Search API] Import response:`, response);
+  return response;
 }
 
 /**

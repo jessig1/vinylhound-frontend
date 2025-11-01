@@ -634,7 +634,7 @@
         console.log('Importing album to database:', externalId);
         let dbTracks = [];
         try {
-          await importAlbum(externalId);
+          await importAlbum(externalId, { token: $token });
           console.log('Album imported successfully');
 
           // Query songs from database to get database IDs
@@ -648,6 +648,9 @@
           }
         } catch (importErr) {
           console.warn('Failed to import album (non-fatal):', importErr);
+          if (importErr instanceof ApiError && importErr.status === 401) {
+            setMessage("Log in to import albums into your library.", "info");
+          }
           // Continue even if import fails - user can still view the album
         }
 
@@ -785,7 +788,7 @@
       console.log('Importing album to database:', albumId);
       let dbTracks = [];
       try {
-        await importAlbum(albumId);
+        await importAlbum(albumId, { token: $token });
         console.log('Album imported successfully');
 
         // Query songs from database to get database IDs
@@ -799,6 +802,9 @@
         }
       } catch (importErr) {
         console.warn('Failed to import album (non-fatal):', importErr);
+        if (importErr instanceof ApiError && importErr.status === 401) {
+          setMessage("Log in to import albums into your library.", "info");
+        }
         // Continue even if import fails - user can still view the album
       }
 
@@ -1045,6 +1051,16 @@
       await loadPlaylists({ silent: true });
     }
   }
+
+  function handleAlbumNavigateToLogin() {
+    navigate("profile");
+    page(buildRoute.profile());
+  }
+
+  function handleAlbumNavigateToSignup() {
+    navigate("profile");
+    page(buildRoute.profile());
+  }
 </script>
 
 <main class:has-sidebar={$isAuthenticated}>
@@ -1095,6 +1111,8 @@
         on:rate={handleAlbumRate}
         on:back={handleAlbumBack}
         on:addToPlaylist={handleAlbumAddToPlaylist}
+        on:navigateToLogin={handleAlbumNavigateToLogin}
+        on:navigateToSignup={handleAlbumNavigateToSignup}
       />
     {:else if $currentView === "artists"}
       <ArtistsView

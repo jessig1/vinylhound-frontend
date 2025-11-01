@@ -4,7 +4,10 @@
  */
 
 // API configuration
-const rawApiBase = import.meta.env?.VITE_API_BASE_URL ?? "/api";
+const rawApiBase =
+  import.meta.env?.VITE_API_BASE_URL ??
+  import.meta.env?.VITE_API_URL ??
+  "/api";
 let API_BASE_ORIGIN = "";
 let API_BASE_PATH = "/api";
 

@@ -3,6 +3,7 @@
   import RatingStars from "./RatingStars.svelte";
   import TrackItem from "./TrackItem.svelte";
   import AddToPlaylistModal from "./AddToPlaylistModal.svelte";
+  import LoginPromptModal from "./LoginPromptModal.svelte";
   import { searchSongs } from "../api";
   import {
     coverAltTextForAlbum,
@@ -34,6 +35,7 @@
   let selectedTrack = null;
   let loadingSongs = false;
   let songsList = [];
+  let showLoginPrompt = false;
 
   const dispatch = createEventDispatcher();
 
@@ -185,7 +187,11 @@
   }
 
   function handleAddAllToPlaylist() {
-    if (!canInteract || normalizedTracks.length === 0) return;
+    if (normalizedTracks.length === 0) return;
+    if (!canInteract) {
+      showLoginPrompt = true;
+      return;
+    }
     // Create a special track object representing all tracks
     selectedTrack = {
       id: null,
@@ -194,6 +200,24 @@
       allTracks: normalizedTracks,
     };
     showPlaylistModal = true;
+  }
+
+  function handleRequiresLogin() {
+    showLoginPrompt = true;
+  }
+
+  function handleLoginPromptLogin() {
+    showLoginPrompt = false;
+    dispatch("navigateToLogin");
+  }
+
+  function handleLoginPromptSignup() {
+    showLoginPrompt = false;
+    dispatch("navigateToSignup");
+  }
+
+  function handleLoginPromptClose() {
+    showLoginPrompt = false;
   }
 </script>
 
@@ -264,7 +288,7 @@
     <section class="album-detail__tracks" aria-label="Track list">
       <div class="tracks-header">
         <h3>Track list</h3>
-        {#if canInteract && normalizedTracks.length > 0}
+        {#if normalizedTracks.length > 0}
           <button class="btn-add-all" on:click={handleAddAllToPlaylist}>
             <span class="icon">➕</span>
             Add All to Playlist
@@ -282,6 +306,7 @@
               {canInteract}
               {token}
               on:addToPlaylist={handleAddToPlaylist}
+              on:requiresLogin={handleRequiresLogin}
             />
           {/each}
         </ol>
@@ -298,6 +323,14 @@
   {token}
   on:success={handlePlaylistModalSuccess}
   on:close={handlePlaylistModalClose}
+/>
+
+<LoginPromptModal
+  isOpen={showLoginPrompt}
+  message="Add tracks to playlists and manage your music collection."
+  on:login={handleLoginPromptLogin}
+  on:signup={handleLoginPromptSignup}
+  on:close={handleLoginPromptClose}
 />
 
 <style>

@@ -178,6 +178,10 @@
   }
 
   function handleAddToPlaylist() {
+    if (!canInteract) {
+      dispatch("requiresLogin", { action: "add to playlist" });
+      return;
+    }
     dispatch("addToPlaylist", { track });
   }
 
@@ -240,7 +244,7 @@
         {/if}
       </div>
 
-      <!-- Favorite Section -->
+      <!-- Favorite Section (only when authenticated) -->
       {#if canInteract}
         <div class="action-section">
           <button
@@ -261,17 +265,15 @@
             {isFavorite ? "Favorited" : "Add to Favorites"}
           </button>
         </div>
-
-        <!-- Playlist Section -->
-        <div class="action-section">
-          <button class="action-btn" on:click={handleAddToPlaylist}>
-            <span class="action-icon">➕</span>
-            Add to Playlist
-          </button>
-        </div>
-      {:else}
-        <p class="signin-prompt">Sign in to favorite tracks and create playlists</p>
       {/if}
+
+      <!-- Playlist Section (always shown, triggers login if not authenticated) -->
+      <div class="action-section">
+        <button class="action-btn" on:click={handleAddToPlaylist}>
+          <span class="action-icon">➕</span>
+          Add to Playlist
+        </button>
+      </div>
     </div>
   {/if}
 </li>

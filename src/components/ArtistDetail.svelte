@@ -1,6 +1,7 @@
 <script>
   import { createEventDispatcher } from "svelte";
   import Discography from "./Discography.svelte";
+  import UpcomingConcerts from "./UpcomingConcerts.svelte";
 
   export let artist = null;
 
@@ -163,6 +164,8 @@
         {/each}
       </ul>
     </section>
+
+    <UpcomingConcerts artistName={name} limit={5} />
 
     <section class="artist-detail__discography">
       <header>
