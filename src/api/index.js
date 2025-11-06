@@ -34,5 +34,19 @@ export {
 // Export songs API
 export { searchSongs, fetchSong } from "./songs.js";
 
+// Export search API
+export { searchMusic, importAlbum, getProviders, getArtistDetails, getAlbumDetails } from "./search.js";
+
 // Export favorites API
 export { listFavoriteTracks, favoriteTrack, unfavoriteTrack } from "./favorites.js";
+
+// Export collections API
+export {
+  fetchCollections,
+  fetchCollectionItem,
+  addToCollection,
+  updateCollectionItem,
+  removeFromCollection,
+  moveCollection,
+  fetchCollectionStats,
+} from "./collections.js";

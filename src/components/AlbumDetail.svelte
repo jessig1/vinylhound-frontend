@@ -4,7 +4,7 @@
   import TrackItem from "./TrackItem.svelte";
   import AddToPlaylistModal from "./AddToPlaylistModal.svelte";
   import LoginPromptModal from "./LoginPromptModal.svelte";
-  import { searchSongs } from "../api";
+  import { searchSongs, favoriteAlbum, addToCollection, importAlbum } from "../api";
   import {
     coverAltTextForAlbum,
     discoverGenres,
@@ -36,11 +36,37 @@
   let loadingSongs = false;
   let songsList = [];
   let showLoginPrompt = false;
+  let isFavorited = false;
+  let isInWishlist = false;
+  let isInOwned = false;
+  let loadingFavorite = false;
+  let loadingCollection = false;
+  let loadingImport = false;
+  let importAttempted = false;
+  let importSucceeded = false;
+  let databaseAlbumId = null; // Store the database ID after import
+  let successMessage = "";
+  let errorMessage = "";
 
   const dispatch = createEventDispatcher();
 
   $: fallbackGenres = discoverGenres(album);
   $: currentRating = normalizeAlbumRating(userRating);
+
+  // Auto-import external albums when viewed (once per album)
+  $: if (isExternalAlbum && canInteract && albumId && token && !loadingImport && !importAttempted) {
+    autoImportExternalAlbum();
+  }
+
+  // Reset import flags when album changes
+  $: if (albumId) {
+    importAttempted = false;
+    importSucceeded = false;
+    databaseAlbumId = null;
+  }
+
+  // Use database ID if available, otherwise fall back to albumId
+  $: effectiveAlbumId = databaseAlbumId || albumId;
 
   // Load songs from database when album changes, but only if album doesn't already have tracks
   $: if (albumId && (!album.tracks || album.tracks.length === 0)) {
@@ -98,6 +124,11 @@
     album?._id ??
     album?.slug ??
     (album?.artist && album?.title ? `${album.artist}-${album.title}` : null);
+
+  // Check if this is an external album (Spotify, etc.) vs database album
+  $: isExternalAlbum = albumIdentifier && typeof albumIdentifier === 'string' && /[^0-9]/.test(albumIdentifier);
+  // Enable buttons if user is authenticated and either it's not external OR import succeeded
+  $: canFavoriteOrCollect = canInteract && (!isExternalAlbum || importSucceeded);
 
   function resolveAverageRating(record) {
     if (!record || typeof record !== "object") {
@@ -219,6 +250,212 @@
   function handleLoginPromptClose() {
     showLoginPrompt = false;
   }
+
+  async function handleToggleFavorite() {
+    if (!canInteract) {
+      showLoginPrompt = true;
+      return;
+    }
+
+    console.log('[AlbumDetail] handleToggleFavorite - State:', {
+      isExternalAlbum,
+      importSucceeded,
+      albumId,
+      databaseAlbumId,
+      effectiveAlbumId
+    });
+
+    if (isExternalAlbum && !importSucceeded) {
+      errorMessage = "Please wait while the album is being imported";
+      setTimeout(() => errorMessage = "", 5000);
+      return;
+    }
+
+    if (!effectiveAlbumId || !token) {
+      console.error('[AlbumDetail] Cannot favorite - missing ID or token:', { effectiveAlbumId, hasToken: !!token });
+      errorMessage = "Unable to favorite: Album ID or token missing";
+      setTimeout(() => errorMessage = "", 3000);
+      return;
+    }
+
+    loadingFavorite = true;
+    errorMessage = "";
+    successMessage = "";
+
+    try {
+      const newFavStatus = !isFavorited;
+      console.log('[AlbumDetail] Calling favoriteAlbum with ID:', effectiveAlbumId);
+
+      await favoriteAlbum({
+        token,
+        albumId: effectiveAlbumId,
+        favorite: newFavStatus,
+        rating: currentRating
+      });
+
+      isFavorited = newFavStatus;
+      successMessage = newFavStatus ? "Added to favorites!" : "Removed from favorites";
+      setTimeout(() => successMessage = "", 3000);
+
+      dispatch("favoriteToggled", { albumId: effectiveAlbumId, isFavorited: newFavStatus });
+    } catch (err) {
+      console.error("[AlbumDetail] Failed to toggle favorite:", err);
+      errorMessage = err.message || "Failed to update favorite status";
+      setTimeout(() => errorMessage = "", 3000);
+    } finally {
+      loadingFavorite = false;
+    }
+  }
+
+  async function handleAddToWishlist() {
+    if (!canInteract) {
+      showLoginPrompt = true;
+      return;
+    }
+
+    if (isExternalAlbum && !importSucceeded) {
+      errorMessage = "Please wait while the album is being imported";
+      setTimeout(() => errorMessage = "", 5000);
+      return;
+    }
+
+    if (!effectiveAlbumId || !token) {
+      errorMessage = "Unable to add to wishlist: Album ID or token missing";
+      setTimeout(() => errorMessage = "", 3000);
+      return;
+    }
+
+    loadingCollection = true;
+    errorMessage = "";
+    successMessage = "";
+
+    try {
+      await addToCollection({
+        token,
+        albumId: effectiveAlbumId,
+        collectionType: "wishlist",
+        notes: ""
+      });
+
+      isInWishlist = true;
+      successMessage = "Added to wishlist!";
+      setTimeout(() => successMessage = "", 3000);
+
+      dispatch("addedToCollection", { albumId: effectiveAlbumId, collectionType: "wishlist" });
+    } catch (err) {
+      console.error("Failed to add to wishlist:", err);
+      if (err.message.includes("already in this collection")) {
+        errorMessage = "Album is already in your wishlist";
+      } else {
+        errorMessage = err.message || "Failed to add to wishlist";
+      }
+      setTimeout(() => errorMessage = "", 3000);
+    } finally {
+      loadingCollection = false;
+    }
+  }
+
+  async function handleAddToOwned() {
+    if (!canInteract) {
+      showLoginPrompt = true;
+      return;
+    }
+
+    if (isExternalAlbum && !importSucceeded) {
+      errorMessage = "Please wait while the album is being imported";
+      setTimeout(() => errorMessage = "", 5000);
+      return;
+    }
+
+    if (!effectiveAlbumId || !token) {
+      errorMessage = "Unable to add to collection: Album ID or token missing";
+      setTimeout(() => errorMessage = "", 3000);
+      return;
+    }
+
+    loadingCollection = true;
+    errorMessage = "";
+    successMessage = "";
+
+    try {
+      await addToCollection({
+        token,
+        albumId: effectiveAlbumId,
+        collectionType: "owned",
+        notes: ""
+      });
+
+      isInOwned = true;
+      successMessage = "Added to owned collection!";
+      setTimeout(() => successMessage = "", 3000);
+
+      dispatch("addedToCollection", { albumId: effectiveAlbumId, collectionType: "owned" });
+    } catch (err) {
+      console.error("Failed to add to owned collection:", err);
+      if (err.message.includes("already in this collection")) {
+        errorMessage = "Album is already in your owned collection";
+      } else {
+        errorMessage = err.message || "Failed to add to owned collection";
+      }
+      setTimeout(() => errorMessage = "", 3000);
+    } finally {
+      loadingCollection = false;
+    }
+  }
+
+  async function autoImportExternalAlbum() {
+    if (importAttempted || !albumId || !token) {
+      console.log('[AlbumDetail] Skipping auto-import:', { importAttempted, albumId: !!albumId, token: !!token });
+      return;
+    }
+
+    importAttempted = true;
+    loadingImport = true;
+
+    try {
+      console.log(`[AlbumDetail] Auto-importing external album: ${albumId}`);
+      const result = await importAlbum(albumId, { token, provider: "spotify" });
+
+      console.log("[AlbumDetail] Album imported successfully. Full result:", result);
+      importSucceeded = true;
+
+      // Store the database album ID from the import result
+      // Try multiple possible locations for the ID
+      const dbId = result?.album?.id || result?.id || result?.album_id;
+      if (dbId) {
+        databaseAlbumId = dbId;
+        console.log(`[AlbumDetail] ✓ Stored database album ID: ${databaseAlbumId}`);
+      } else {
+        console.warn('[AlbumDetail] No database ID found in import result:', result);
+      }
+
+      // Dispatch event so parent can refresh the album data
+      dispatch("albumImported", { albumId, result });
+    } catch (err) {
+      console.error("[AlbumDetail] Failed to auto-import album:", err);
+
+      // If album already exists, consider it a success (buttons should work)
+      if (err.message.includes("already exists") || err.message.includes("already in")) {
+        console.log("[AlbumDetail] Album already exists in library");
+        importSucceeded = true;
+
+        // Try to extract the database ID from the error response
+        const dbId = err.data?.album?.id || err.data?.id || err.data?.album_id;
+        if (dbId) {
+          databaseAlbumId = dbId;
+          console.log(`[AlbumDetail] ✓ Stored existing database album ID: ${databaseAlbumId}`);
+        } else {
+          console.warn('[AlbumDetail] No database ID found in error response:', err.data);
+        }
+      } else {
+        // Only show error if it's a real failure
+        errorMessage = "Unable to import album automatically";
+        setTimeout(() => errorMessage = "", 4000);
+      }
+    } finally {
+      loadingImport = false;
+    }
+  }
 </script>
 
 <div class="album-detail">
@@ -251,6 +488,49 @@
               <span class="value">{fallbackGenres.join(", ")}</span>
             </div>
           {/if}
+        </div>
+
+        <!-- Action buttons for favorite and collection -->
+        {#if successMessage}
+          <div class="action-message action-message--success">{successMessage}</div>
+        {/if}
+        {#if errorMessage}
+          <div class="action-message action-message--error">{errorMessage}</div>
+        {/if}
+
+        <div class="album-detail__actions">
+          <button
+            class="action-btn action-btn--favorite"
+            class:active={isFavorited}
+            disabled={loadingFavorite || !canFavoriteOrCollect}
+            on:click={handleToggleFavorite}
+            title={(isExternalAlbum && !importSucceeded) ? "Importing album..." : (isFavorited ? "Remove from favorites" : "Add to favorites")}
+          >
+            <span class="icon">{isFavorited ? "❤️" : "🤍"}</span>
+            {isFavorited ? "Favorited" : "Favorite"}
+          </button>
+
+          <button
+            class="action-btn action-btn--wishlist"
+            class:active={isInWishlist}
+            disabled={loadingCollection || !canFavoriteOrCollect || isInWishlist}
+            on:click={handleAddToWishlist}
+            title={(isExternalAlbum && !importSucceeded) ? "Importing album..." : "Add to wishlist"}
+          >
+            <span class="icon">⭐</span>
+            {isInWishlist ? "In Wishlist" : "Add to Wishlist"}
+          </button>
+
+          <button
+            class="action-btn action-btn--owned"
+            class:active={isInOwned}
+            disabled={loadingCollection || !canFavoriteOrCollect || isInOwned}
+            on:click={handleAddToOwned}
+            title={(isExternalAlbum && !importSucceeded) ? "Importing album..." : "Add to owned collection"}
+          >
+            <span class="icon">📀</span>
+            {isInOwned ? "Owned" : "Mark as Owned"}
+          </button>
         </div>
     </div>
   </div>
@@ -576,6 +856,103 @@
     color: rgba(55, 65, 81, 0.75);
   }
 
+  /* Action buttons */
+  .album-detail__actions {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-top: 1rem;
+  }
+
+  .action-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.65rem 1.1rem;
+    border: 2px solid rgba(79, 70, 229, 0.2);
+    border-radius: 0.75rem;
+    background: white;
+    color: #4f46e5;
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 6px rgba(79, 70, 229, 0.1);
+  }
+
+  .action-btn:hover:not(:disabled) {
+    background: rgba(79, 70, 229, 0.05);
+    border-color: rgba(79, 70, 229, 0.4);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(79, 70, 229, 0.2);
+  }
+
+  .action-btn:active:not(:disabled) {
+    transform: translateY(0);
+  }
+
+  .action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .action-btn.active {
+    background: linear-gradient(135deg, #4f46e5, #6366f1);
+    color: white;
+    border-color: #4f46e5;
+  }
+
+  .action-btn--favorite.active {
+    background: linear-gradient(135deg, #ef4444, #f87171);
+    border-color: #ef4444;
+  }
+
+  .action-btn--wishlist.active {
+    background: linear-gradient(135deg, #f59e0b, #fbbf24);
+    border-color: #f59e0b;
+  }
+
+  .action-btn--owned.active {
+    background: linear-gradient(135deg, #10b981, #34d399);
+    border-color: #10b981;
+  }
+
+  .action-btn .icon {
+    font-size: 1.1rem;
+  }
+
+  .action-message {
+    padding: 0.75rem 1rem;
+    border-radius: 0.75rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-top: 0.75rem;
+    animation: slideIn 0.3s ease;
+  }
+
+  .action-message--success {
+    background: rgba(16, 185, 129, 0.1);
+    color: #059669;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+  }
+
+  .action-message--error {
+    background: rgba(239, 68, 68, 0.1);
+    color: #dc2626;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+  }
+
+  @keyframes slideIn {
+    from {
+      opacity: 0;
+      transform: translateY(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
   @media (max-width: 640px) {
     .album-detail {
       padding: 1.75rem;
@@ -587,6 +964,15 @@
 
     .album-detail__header {
       flex-direction: column;
+    }
+
+    .album-detail__actions {
+      flex-direction: column;
+    }
+
+    .action-btn {
+      width: 100%;
+      justify-content: center;
     }
   }
 </style>

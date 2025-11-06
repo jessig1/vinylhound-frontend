@@ -17,11 +17,153 @@ export const artists = writable([]);
 export const artistsLoading = writable(false);
 export const artistsError = writable("");
 export const artistsInitialized = writable(false);
-export const selectedArtist = writable(null);
 
-// Album view state
+// Selected artist with localStorage persistence
+function createPersistedArtist() {
+  const STORAGE_KEY = 'vinylhound_selected_artist';
+
+  // Try to load from localStorage on init
+  let initial = null;
+  if (typeof window !== 'undefined') {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        initial = JSON.parse(stored);
+        console.log('[Store] Loaded selectedArtist from localStorage:', {
+          name: initial?.name,
+          slug: initial?.slug,
+          external_id: initial?.external_id,
+          albumCount: initial?.albums?.length || 0
+        });
+      } else {
+        console.log('[Store] No selectedArtist in localStorage');
+      }
+    } catch (e) {
+      console.warn('[Store] Failed to load selected artist from localStorage:', e);
+    }
+  }
+
+  const { subscribe, set, update } = writable(initial);
+
+  return {
+    subscribe,
+    set: (value) => {
+      // Save to localStorage whenever the value changes
+      if (typeof window !== 'undefined') {
+        try {
+          if (value) {
+            console.log('[Store] Saving selectedArtist to localStorage:', {
+              name: value?.name,
+              slug: value?.slug,
+              external_id: value?.external_id,
+              albumCount: value?.albums?.length || 0
+            });
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
+          } else {
+            console.log('[Store] Removing selectedArtist from localStorage');
+            localStorage.removeItem(STORAGE_KEY);
+          }
+        } catch (e) {
+          console.warn('[Store] Failed to save selected artist to localStorage:', e);
+        }
+      }
+      set(value);
+    },
+    update: (fn) => {
+      update((current) => {
+        const next = fn(current);
+        // Save to localStorage
+        if (typeof window !== 'undefined') {
+          try {
+            if (next) {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+            } else {
+              localStorage.removeItem(STORAGE_KEY);
+            }
+          } catch (e) {
+            console.warn('Failed to save selected artist to localStorage:', e);
+          }
+        }
+        return next;
+      });
+    }
+  };
+}
+
+export const selectedArtist = createPersistedArtist();
+
+// Album view state with localStorage persistence
+function createPersistedAlbumView() {
+  const STORAGE_KEY = 'vinylhound_album_view';
+
+  // Try to load from localStorage on init
+  let initial = null;
+  if (typeof window !== 'undefined') {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        initial = JSON.parse(stored);
+        console.log('[Store] Loaded albumViewData from localStorage:', {
+          title: initial?.title,
+          artist: initial?.artist,
+          id: initial?.id,
+          trackCount: initial?.tracks?.length || 0
+        });
+      } else {
+        console.log('[Store] No albumViewData in localStorage');
+      }
+    } catch (e) {
+      console.warn('[Store] Failed to load album view from localStorage:', e);
+    }
+  }
+
+  const { subscribe, set, update } = writable(initial);
+
+  return {
+    subscribe,
+    set: (value) => {
+      if (typeof window !== 'undefined') {
+        try {
+          if (value) {
+            console.log('[Store] Saving albumViewData to localStorage:', {
+              title: value?.title,
+              artist: value?.artist,
+              id: value?.id,
+              trackCount: value?.tracks?.length || 0
+            });
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
+          } else {
+            console.log('[Store] Removing albumViewData from localStorage');
+            localStorage.removeItem(STORAGE_KEY);
+          }
+        } catch (e) {
+          console.warn('[Store] Failed to save album view to localStorage:', e);
+        }
+      }
+      set(value);
+    },
+    update: (fn) => {
+      update((current) => {
+        const next = fn(current);
+        if (typeof window !== 'undefined') {
+          try {
+            if (next) {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+            } else {
+              localStorage.removeItem(STORAGE_KEY);
+            }
+          } catch (e) {
+            console.warn('[Store] Failed to update album view in localStorage:', e);
+          }
+        }
+        return next;
+      });
+    }
+  };
+}
+
 export const albumViewId = writable(null);
-export const albumViewData = writable(null);
+export const albumViewData = createPersistedAlbumView();
 export const albumViewLoading = writable(false);
 export const albumViewError = writable("");
 
