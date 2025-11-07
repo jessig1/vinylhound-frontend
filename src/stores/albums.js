@@ -12,8 +12,66 @@ export const ratedAlbums = derived(albumInteractions, ($interactions) => {
   return Object.values($interactions || {}).filter((item) => Number.isFinite(item?.rating));
 });
 
-// Artists state
-export const artists = writable([]);
+// Artists state with localStorage persistence
+function createPersistedArtists() {
+  const STORAGE_KEY = 'vinylhound_artists';
+
+  // Try to load from localStorage on init
+  let initial = [];
+  if (typeof window !== 'undefined') {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        initial = JSON.parse(stored);
+        console.log('[Store] Loaded artists from localStorage:', initial.length, 'artists');
+      }
+    } catch (e) {
+      console.warn('[Store] Failed to load artists from localStorage:', e);
+    }
+  }
+
+  const { subscribe, set, update } = writable(initial);
+
+  return {
+    subscribe,
+    set: (value) => {
+      // Save to localStorage whenever the value changes
+      if (typeof window !== 'undefined') {
+        try {
+          if (value && Array.isArray(value)) {
+            console.log('[Store] Saving artists to localStorage:', value.length, 'artists');
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
+          } else {
+            localStorage.removeItem(STORAGE_KEY);
+          }
+        } catch (e) {
+          console.warn('[Store] Failed to save artists to localStorage:', e);
+        }
+      }
+      set(value);
+    },
+    update: (fn) => {
+      update((current) => {
+        const next = fn(current);
+        // Save to localStorage
+        if (typeof window !== 'undefined') {
+          try {
+            if (next && Array.isArray(next)) {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+            } else {
+              localStorage.removeItem(STORAGE_KEY);
+            }
+          } catch (e) {
+            console.warn('[Store] Failed to save artists to localStorage:', e);
+          }
+        }
+        return next;
+      });
+    }
+  };
+}
+
+export const artists = createPersistedArtists();
 export const artistsLoading = writable(false);
 export const artistsError = writable("");
 export const artistsInitialized = writable(false);

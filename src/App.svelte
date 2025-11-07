@@ -553,11 +553,43 @@
     try {
       const albums = await fetchAlbums({ token: $token });
       const source = Array.isArray(albums) ? albums : [];
-      const artistsList = buildArtistDirectory(source);
-      artists.set(artistsList);
+      const artistsFromAlbums = buildArtistDirectory(source);
+
+      // Merge with existing persisted artists (from search/Spotify)
+      // Keep artists with external_id (from Spotify) and update/add artists from albums
+      artists.update(currentArtists => {
+        const merged = new Map();
+
+        // First, add all existing artists (preserving full Spotify data)
+        currentArtists.forEach(artist => {
+          if (artist.slug) {
+            merged.set(artist.slug, artist);
+          }
+        });
+
+        // Then update/add artists from albums
+        artistsFromAlbums.forEach(artist => {
+          if (artist.slug) {
+            const existing = merged.get(artist.slug);
+            if (existing && existing.external_id) {
+              // Keep the full Spotify data, just update album count if needed
+              merged.set(artist.slug, {
+                ...existing,
+                // Merge albums if the collection artist has albums not in Spotify data
+                albums: existing.albums || artist.albums,
+              });
+            } else {
+              // New artist or update basic artist from albums
+              merged.set(artist.slug, artist);
+            }
+          }
+        });
+
+        return Array.from(merged.values());
+      });
 
       if ($selectedArtist) {
-        const updated = artistsList.find((item) => item.slug === $selectedArtist.slug);
+        const updated = artistsFromAlbums.find((item) => item.slug === $selectedArtist.slug);
         if (updated) {
           selectedArtist.set({
             ...updated,

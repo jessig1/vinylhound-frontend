@@ -80,6 +80,19 @@ export async function getProviders() {
 }
 
 /**
+ * Search for artists by name
+ * @param {string} query - Artist name to search for
+ * @param {number} limit - Maximum number of results (default: 5)
+ * @returns {Promise<Array>} Array of artist objects
+ */
+export async function searchArtists(query, limit = 5) {
+    console.log(`[Search API] Searching for artist "${query}"`);
+
+    const response = await searchMusic(query, "artist", limit, false);
+    return response?.artists || [];
+}
+
+/**
  * Get full artist details with all albums from Spotify
  * @param {string} artistId - The Spotify artist ID
  * @returns {Promise<{artist: Object, albums: Array}>}

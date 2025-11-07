@@ -32,6 +32,22 @@
       console.log('[ArtistsView] Refreshing artist data from API for:', $selectedArtist.name, 'ID:', $selectedArtist.external_id);
       await refreshArtistData($selectedArtist.external_id, $selectedArtist.slug);
     }
+    // If we have a fully loaded artist with external_id, make sure it's in the artists list
+    else if ($selectedArtist && $selectedArtist.external_id && $selectedArtist.albums && $selectedArtist.albums.length > 0) {
+      console.log('[ArtistsView] Artist has full data, ensuring it\'s in the artists list:', $selectedArtist.name);
+
+      // Check if artist is already in the list
+      const existsInList = $artists.some(a => a.slug === $selectedArtist.slug);
+
+      if (!existsInList) {
+        console.log('[ArtistsView] Artist not in list, adding:', $selectedArtist.name);
+        artists.update(currentArtists => {
+          return [...currentArtists, $selectedArtist];
+        });
+      } else {
+        console.log('[ArtistsView] Artist already in list:', $selectedArtist.name);
+      }
+    }
   });
 
   async function refreshArtistData(artistId, slug) {
@@ -73,6 +89,22 @@
 
       console.log('[ArtistsView] Setting enriched artist:', enrichedArtist.name);
       selectedArtist.set(enrichedArtist);
+
+      // Add this artist to the artists list if not already present
+      artists.update(currentArtists => {
+        const existingIndex = currentArtists.findIndex(a => a.slug === slug);
+        if (existingIndex >= 0) {
+          // Update existing artist with full data
+          console.log('[ArtistsView] Updating existing artist in list:', enrichedArtist.name);
+          const updated = [...currentArtists];
+          updated[existingIndex] = enrichedArtist;
+          return updated;
+        } else {
+          // Add new artist to the list
+          console.log('[ArtistsView] Adding new artist to list:', enrichedArtist.name);
+          return [...currentArtists, enrichedArtist];
+        }
+      });
     } catch (err) {
       console.error('[ArtistsView] Failed to refresh artist data:', err);
     } finally {
@@ -94,17 +126,41 @@
     isRefreshingArtist
   });
 
-  function handleSelect(event) {
+  async function handleSelect(event) {
     const artist = event.detail;
     if (!artist) {
       return;
     }
     const match = $artists.find((item) => item.slug === artist.slug) || artist;
+
+    // Set the artist immediately to show the UI
     selectedArtist.set(match);
 
     // Update URL to reflect the selected artist
     if (match.slug) {
       navigateTo(`/artists/${match.slug}`);
+    }
+
+    // If this artist doesn't have full data (no external_id), try to fetch it from Spotify
+    if (!match.external_id && match.name) {
+      console.log('[ArtistsView] Artist from collection lacks external_id, searching Spotify for:', match.name);
+      try {
+        // Search Spotify for this artist by name
+        const { searchArtists } = await import("../api/search.js");
+        const results = await searchArtists(match.name, 1);
+
+        if (results && results.length > 0) {
+          const spotifyArtist = results[0];
+          console.log('[ArtistsView] Found Spotify match:', spotifyArtist.name, 'ID:', spotifyArtist.id);
+
+          // Fetch full artist details with albums
+          await refreshArtistData(spotifyArtist.id, match.slug);
+        } else {
+          console.log('[ArtistsView] No Spotify match found for:', match.name);
+        }
+      } catch (err) {
+        console.error('[ArtistsView] Failed to fetch Spotify artist data:', err);
+      }
     }
   }
 
