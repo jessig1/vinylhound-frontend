@@ -1,8 +1,11 @@
 <script>
+  import Collection from "./Collection.svelte";
+
   export let content = [];
   export let favoriteAlbums = [];
   export let ratedAlbums = [];
   export let loading = false;
+  export let token = "";
 
   const MAX_ITEMS = 10;
 
@@ -94,6 +97,9 @@
     </ul>
   {/if}
 </section>
+
+<!-- Collection section displayed below the news feed -->
+<Collection {token} />
 
 <style>
   .feed {

@@ -1,13 +1,21 @@
 <script>
+  import { createEventDispatcher } from "svelte";
+
   export let artistName = "";
   export let limit = 5;
 
-  // Placeholder concert data
-  const placeholderConcerts = [
+  const dispatch = createEventDispatcher();
+
+  let showPastConcerts = false;
+
+  // Placeholder concert data - mix of future and past concerts
+  const today = new Date();
+  const allConcerts = [
+    // Future concerts
     {
       id: 1,
-      name: "Summer Tour 2025",
-      date: new Date("2025-08-15T19:00:00"),
+      name: "Summer Tour 2026",
+      date: new Date(today.getFullYear(), today.getMonth() + 1, 15, 19, 0),
       venue: {
         name: "Red Rocks Amphitheatre",
         city: "Morrison",
@@ -18,7 +26,7 @@
     {
       id: 2,
       name: "Fall Festival Performance",
-      date: new Date("2025-09-22T20:00:00"),
+      date: new Date(today.getFullYear(), today.getMonth() + 2, 22, 20, 0),
       venue: {
         name: "Madison Square Garden",
         city: "New York",
@@ -29,7 +37,7 @@
     {
       id: 3,
       name: "World Tour - LA Stop",
-      date: new Date("2025-10-05T19:30:00"),
+      date: new Date(today.getFullYear(), today.getMonth() + 3, 5, 19, 30),
       venue: {
         name: "Hollywood Bowl",
         city: "Los Angeles",
@@ -40,7 +48,7 @@
     {
       id: 4,
       name: "Acoustic Sessions",
-      date: new Date("2025-11-12T18:00:00"),
+      date: new Date(today.getFullYear(), today.getMonth() + 4, 12, 18, 0),
       venue: {
         name: "The Fillmore",
         city: "San Francisco",
@@ -51,17 +59,70 @@
     {
       id: 5,
       name: "New Year's Eve Spectacular",
-      date: new Date("2025-12-31T21:00:00"),
+      date: new Date(today.getFullYear(), 11, 31, 21, 0),
       venue: {
-        name: "Staples Center",
+        name: "Crypto.com Arena",
         city: "Los Angeles",
         state: "CA",
       },
       ticketPrice: 250.0,
     },
+    // Past concerts
+    {
+      id: 6,
+      name: "Spring Arena Tour",
+      date: new Date(today.getFullYear(), today.getMonth() - 1, 10, 20, 0),
+      venue: {
+        name: "The Forum",
+        city: "Inglewood",
+        state: "CA",
+      },
+      ticketPrice: 140.0,
+    },
+    {
+      id: 7,
+      name: "Winter Festival Headliner",
+      date: new Date(today.getFullYear(), today.getMonth() - 2, 18, 19, 30),
+      venue: {
+        name: "Barclays Center",
+        city: "Brooklyn",
+        state: "NY",
+      },
+      ticketPrice: 160.0,
+    },
+    {
+      id: 8,
+      name: "Acoustic Sessions Tour",
+      date: new Date(today.getFullYear(), today.getMonth() - 3, 5, 18, 0),
+      venue: {
+        name: "The Ryman Auditorium",
+        city: "Nashville",
+        state: "TN",
+      },
+      ticketPrice: 85.0,
+    },
+    {
+      id: 9,
+      name: "New Year's Eve 2024",
+      date: new Date(today.getFullYear() - 1, 11, 31, 22, 0),
+      venue: {
+        name: "Times Square",
+        city: "New York",
+        state: "NY",
+      },
+      ticketPrice: 300.0,
+    },
   ];
 
-  $: concerts = placeholderConcerts.slice(0, limit);
+  function isPastConcert(concert) {
+    return concert.date < today;
+  }
+
+  $: futureConcerts = allConcerts.filter(c => !isPastConcert(c)).slice(0, limit);
+  $: pastConcerts = allConcerts.filter(c => isPastConcert(c)).sort((a, b) => b.date - a.date).slice(0, limit);
+  $: concerts = showPastConcerts ? pastConcerts : futureConcerts;
+  $: hasPastConcerts = allConcerts.some(c => isPastConcert(c));
+  $: hasFutureConcerts = allConcerts.some(c => !isPastConcert(c));
 
   function formatDate(date) {
     if (!date) return "Date TBA";
@@ -106,17 +167,53 @@
     if (days < 365) return `In ${Math.floor(days / 30)} months`;
     return `In ${Math.floor(days / 365)} years`;
   }
+
+  function handleConcertClick(concert) {
+    dispatch("selectconcert", { concert });
+  }
 </script>
 
 <section class="upcoming-concerts">
   <header>
-    <h3>Upcoming Concerts</h3>
-    <p>Catch {artistName || "this artist"} live at these venues</p>
+    <div class="header-content">
+      <div>
+        <h3>{showPastConcerts ? "Past Concerts" : "Upcoming Concerts"}</h3>
+        <p>
+          {#if showPastConcerts}
+            Previous performances by {artistName || "this artist"}
+          {:else}
+            Catch {artistName || "this artist"} live at these venues
+          {/if}
+        </p>
+      </div>
+      {#if showPastConcerts && hasFutureConcerts}
+        <button
+          type="button"
+          class="toggle-concerts-btn"
+          on:click={() => (showPastConcerts = false)}
+        >
+          Show Upcoming
+        </button>
+      {:else if !showPastConcerts && hasPastConcerts}
+        <button
+          type="button"
+          class="toggle-concerts-btn toggle-concerts-btn--secondary"
+          on:click={() => (showPastConcerts = true)}
+        >
+          Show Past Concerts
+        </button>
+      {/if}
+    </div>
   </header>
   {#if concerts.length > 0}
     <ul class="concerts-list">
       {#each concerts as concert (concert.id)}
-        <li class="concert-card">
+        <li>
+          <button
+            type="button"
+            class="concert-card"
+            on:click={() => handleConcertClick(concert)}
+          >
           <div class="concert-card__date">
             <div class="concert-card__date-badge">
               <span class="date-badge__month"
@@ -163,11 +260,18 @@
               >
             {/if}
           </div>
+          </button>
         </li>
       {/each}
     </ul>
   {:else}
-    <p class="concerts-list--empty">No upcoming concerts scheduled at this time.</p>
+    <p class="concerts-list--empty">
+      {#if showPastConcerts}
+        No past concert records available.
+      {:else}
+        No upcoming concerts scheduled at this time.
+      {/if}
+    </p>
   {/if}
 </section>
 
@@ -188,6 +292,21 @@
     gap: 0.25rem;
   }
 
+  .header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .header-content > div {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    flex: 1;
+  }
+
   .upcoming-concerts header h3 {
     margin: 0;
     font-size: 1.35rem;
@@ -201,6 +320,37 @@
     font-size: 0.95rem;
   }
 
+  .toggle-concerts-btn {
+    border: none;
+    border-radius: 0.75rem;
+    padding: 0.55rem 1.15rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+    background: #4f46e5;
+    color: #ffffff;
+    white-space: nowrap;
+    font-size: 0.9rem;
+  }
+
+  .toggle-concerts-btn:hover,
+  .toggle-concerts-btn:focus-visible {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 20px rgba(79, 70, 229, 0.35);
+    outline: none;
+  }
+
+  .toggle-concerts-btn--secondary {
+    background: rgba(79, 70, 229, 0.15);
+    color: #312e81;
+  }
+
+  .toggle-concerts-btn--secondary:hover,
+  .toggle-concerts-btn--secondary:focus-visible {
+    background: rgba(79, 70, 229, 0.25);
+    box-shadow: 0 8px 20px rgba(79, 70, 229, 0.2);
+  }
+
   .concerts-list {
     margin: 0;
     padding: 0;
@@ -211,6 +361,7 @@
   }
 
   .concert-card {
+    width: 100%;
     display: grid;
     grid-template-columns: auto 1fr auto;
     gap: 1.25rem;
@@ -221,12 +372,20 @@
     box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
     transition: transform 0.2s ease, box-shadow 0.2s ease;
     border: 1px solid rgba(148, 163, 184, 0.12);
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
   }
 
   .concert-card:hover {
     transform: translateY(-2px);
     box-shadow: 0 12px 28px rgba(99, 102, 241, 0.18);
     border-color: rgba(99, 102, 241, 0.25);
+  }
+
+  .concert-card:focus-visible {
+    outline: 2px solid #6366f1;
+    outline-offset: 2px;
   }
 
   .concert-card__date {
@@ -357,6 +516,15 @@
 
     .upcoming-concerts {
       padding: 1.25rem;
+    }
+
+    .header-content {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .toggle-concerts-btn {
+      align-self: flex-start;
     }
   }
 

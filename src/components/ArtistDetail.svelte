@@ -2,10 +2,13 @@
   import { createEventDispatcher } from "svelte";
   import Discography from "./Discography.svelte";
   import UpcomingConcerts from "./UpcomingConcerts.svelte";
+  import ConcertDetail from "./ConcertDetail.svelte";
 
   export let artist = null;
 
   const dispatch = createEventDispatcher();
+
+  let selectedConcert = null;
 
   function getInitial(value = "") {
     const trimmed = (value || "").trim();
@@ -107,6 +110,14 @@
     const albumId = deriveAlbumId(normalized);
     dispatch("selectalbum", { album: normalized, albumId });
   }
+
+  function handleConcertSelect(event) {
+    selectedConcert = event.detail.concert;
+  }
+
+  function handleBackFromConcert() {
+    selectedConcert = null;
+  }
 </script>
 
 {#if artist}
@@ -165,7 +176,11 @@
       </ul>
     </section>
 
-    <UpcomingConcerts artistName={name} limit={5} />
+    {#if selectedConcert}
+      <ConcertDetail concert={selectedConcert} on:back={handleBackFromConcert} />
+    {:else}
+      <UpcomingConcerts artistName={name} limit={3} on:selectconcert={handleConcertSelect} />
+    {/if}
 
     <section class="artist-detail__discography">
       <header>

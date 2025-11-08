@@ -1,5 +1,5 @@
 <script>
-  import { content, favoriteAlbums, ratedAlbums, loading } from "../stores";
+  import { content, favoriteAlbums, ratedAlbums, loading, token } from "../stores";
   import NewsFeed from "../components/NewsFeed.svelte";
 </script>
 
@@ -8,4 +8,5 @@
   favoriteAlbums={$favoriteAlbums}
   ratedAlbums={$ratedAlbums}
   loading={$loading}
+  token={$token}
 />

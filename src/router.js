@@ -71,11 +71,21 @@ export function initRouter() {
   // Album detail - fetch data on route load
   page("/album/:id", async (ctx) => {
     const albumId = ctx.params.id;
+    console.log('[Router] Album detail route - ID from URL:', albumId);
+
     albumViewId.set(albumId);
     navigate("album");
 
-    // Check if album data is already loaded (e.g., from Spotify search)
+    // Check if album data is already loaded (e.g., from localStorage or Spotify search)
     const currentAlbumData = get(albumViewData);
+    console.log('[Router] Current albumViewData:', currentAlbumData ? {
+      title: currentAlbumData.title,
+      artist: currentAlbumData.artist,
+      id: currentAlbumData.id,
+      external_id: currentAlbumData.external_id,
+      trackCount: currentAlbumData.tracks?.length || 0
+    } : null);
+
     const isAlreadyLoaded = currentAlbumData &&
                            (currentAlbumData.id === albumId ||
                             currentAlbumData.external_id === albumId ||
@@ -84,11 +94,12 @@ export function initRouter() {
     // Skip fetching if data is already loaded or if ID looks like external ID
     const isExternalId = typeof albumId === 'string' && /[^0-9]/.test(albumId);
     if (isAlreadyLoaded || isExternalId) {
-      console.log('Skipping album fetch - data already loaded or external ID:', albumId);
+      console.log('[Router] ✓ Album data already loaded for ID:', albumId, 'Title:', currentAlbumData?.title);
       return;
     }
 
     // Load album data from database
+    console.log('[Router] Fetching album from API for ID:', albumId);
     albumViewLoading.set(true);
     albumViewError.set("");
 
@@ -96,8 +107,14 @@ export function initRouter() {
       const currentToken = get(token);
       const requestOptions = currentToken ? { token: currentToken } : undefined;
       const albumData = await fetchAlbum(albumId, requestOptions);
+      console.log('[Router] Received album data:', {
+        title: albumData?.title,
+        artist: albumData?.artist,
+        trackCount: albumData?.tracks?.length || 0
+      });
       albumViewData.set(albumData);
     } catch (err) {
+      console.error('[Router] Failed to fetch album:', err);
       const errorMsg = err instanceof ApiError && err.status === 404
         ? "Album not found."
         : err?.message || "Unable to load album details.";
@@ -116,12 +133,21 @@ export function initRouter() {
   // Artist detail - protected route
   page("/artists/:slug", requireAuth, (ctx) => {
     const slug = ctx.params.slug;
-    // Artist will be loaded by ArtistsView based on slug
     navigate("artists");
-    // Store slug for later lookup
+
+    // Only update if current artist doesn't match the slug
     selectedArtist.update((current) => {
-      if (current?.slug === slug) return current;
-      return { slug }; // Placeholder, will be hydrated by ArtistsView
+      console.log('[Router] Artist detail route - slug from URL:', slug);
+      console.log('[Router] Current selectedArtist:', current);
+
+      // If we already have full artist data for this slug, keep it
+      if (current && current.slug === slug && current.name) {
+        console.log('[Router] ✓ Artist data already loaded for slug:', slug, 'Name:', current.name, 'Albums:', current.albums?.length || 0);
+        return current;
+      }
+      // If slug doesn't match, set placeholder (will be hydrated by ArtistsView)
+      console.log('[Router] Setting placeholder for slug:', slug);
+      return { slug };
     });
   });
 
