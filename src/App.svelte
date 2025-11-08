@@ -79,6 +79,7 @@
     ApiError,
   } from "./api";
   import { getArtistDetails, getAlbumDetails, importAlbum } from "./api/search.js";
+  import { saveArtist } from "./api/artists.js";
   import { searchSongs } from "./api/songs.js";
   import { normalizeContent } from "./lib/content";
 
@@ -783,6 +784,29 @@
       };
 
       selectedArtist.set(enrichedArtist);
+
+      // Save artist to database
+      try {
+        const currentToken = get(token);
+        await saveArtist(
+          {
+            external_id: artistId,
+            name: fetchedArtist.name || artist.name,
+            provider: 'spotify',
+            image_url: fetchedArtist.image_url || artist.image_url || '',
+            biography: fetchedArtist.biography || '',
+            genres: fetchedArtist.genres || artist.genres || [],
+            popularity: fetchedArtist.popularity || artist.popularity || 0,
+            external_url: fetchedArtist.external_url || artist.external_url || '',
+          },
+          { token: currentToken }
+        );
+        console.log('[App] Saved artist to database:', fetchedArtist.name || artist.name);
+      } catch (saveErr) {
+        console.error('[App] Failed to save artist to database:', saveErr);
+        // Don't show error to user, this is non-critical
+      }
+
       navigate("artists");
       navigateTo(targetRoute);
     } catch (err) {

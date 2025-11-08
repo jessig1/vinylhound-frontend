@@ -5,6 +5,7 @@
   import ArtistList from "../components/ArtistList.svelte";
   import ArtistDetail from "../components/ArtistDetail.svelte";
   import { getArtistDetails } from "../api/search.js";
+  import { saveArtist, getArtists } from "../api/artists.js";
   import { token } from "../stores/auth";
   import { get } from "svelte/store";
 
@@ -23,9 +24,51 @@
     }
   }
 
-  // Check if we need to refresh artist data on mount (for external artists from search)
+  // Load artists from database on mount
   onMount(async () => {
     console.log('[ArtistsView] onMount - selectedArtist:', $selectedArtist);
+
+    // Load artists from database
+    try {
+      const currentToken = get(token);
+      const dbArtists = await getArtists({ token: currentToken });
+
+      if (dbArtists && dbArtists.length > 0) {
+        console.log('[ArtistsView] Loaded', dbArtists.length, 'artists from database');
+
+        // Merge with existing artists in localStorage
+        artists.update(currentArtists => {
+          const merged = [...currentArtists];
+
+          for (const dbArtist of dbArtists) {
+            const exists = merged.some(a =>
+              (a.external_id && a.external_id === dbArtist.external_id) ||
+              a.name === dbArtist.name
+            );
+
+            if (!exists) {
+              // Create a slug from the artist name
+              const slug = dbArtist.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+
+              merged.push({
+                id: dbArtist.external_id,
+                external_id: dbArtist.external_id,
+                slug: slug,
+                name: dbArtist.name,
+                image: dbArtist.image_url,
+                genres: dbArtist.genres || [],
+                provider: dbArtist.provider,
+                albums: [], // Will be loaded when artist is selected
+              });
+            }
+          }
+
+          return merged;
+        });
+      }
+    } catch (err) {
+      console.error('[ArtistsView] Failed to load artists from database:', err);
+    }
 
     // If we have an artist with external_id but no albums, refresh the data
     if ($selectedArtist && $selectedArtist.external_id && (!$selectedArtist.albums || $selectedArtist.albums.length === 0)) {
@@ -89,6 +132,27 @@
 
       console.log('[ArtistsView] Setting enriched artist:', enrichedArtist.name);
       selectedArtist.set(enrichedArtist);
+
+      // Save artist to database
+      try {
+        const currentToken = get(token);
+        await saveArtist(
+          {
+            external_id: artistId,
+            name: fetchedArtist.name,
+            provider: 'spotify',
+            image_url: fetchedArtist.image_url,
+            biography: fetchedArtist.biography || '',
+            genres: fetchedArtist.genres || [],
+            popularity: fetchedArtist.popularity || 0,
+            external_url: fetchedArtist.external_url || '',
+          },
+          { token: currentToken }
+        );
+        console.log('[ArtistsView] Saved artist to database:', fetchedArtist.name);
+      } catch (err) {
+        console.error('[ArtistsView] Failed to save artist to database:', err);
+      }
 
       // Add this artist to the artists list if not already present
       artists.update(currentArtists => {
